@@ -247,13 +247,14 @@
 ```
 Task
 ├── test_path: str          # failing test 文件路径
-├── workspace: str          # 工作目录路径
-└── config: Config
+└── workspace: str          # 工作目录路径
 
 Config
 ├── max_rounds: int         # 默认 5
 ├── llm_provider: str       # "openai" | "mock"
-└── model: str              # "gpt-4o-mini" 等
+├── model: str              # "gpt-4o-mini" 等
+├── workspace: str          # 默认 "."
+└── test_timeout: int       # 默认 30
 
 Action
 ├── type: str               # "read_file" | "edit_file" | "run_shell" | ...

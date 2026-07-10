@@ -71,8 +71,18 @@ Task 1 (Scaffolding)
 - Test: `tests/test_models.py`
 
 **Implementation points:**
-- Enums: `ActionType` (READ_FILE, EDIT_FILE, WRITE_FILE, RUN_SHELL, RUN_TESTS, GIVE_UP), `FeedbackType` (COMPILE_ERROR, ASSERTION_FAILURE, ENVIRONMENT_ERROR, TIMEOUT, PASS, UNKNOWN)
-- Dataclasses: `Task(test_path, workspace)`, `Action(type, params, reasoning)`, `ActionResult(success, output, error)`, `TestResult(exit_code, stdout, stderr, passed)`, `ClassifiedFeedback(type, location, message, expected, actual, strategy_hint)`, `Result(success, rounds, reason, action_history)`, `GuardrailResult(blocked, reason)`
+- Enums (use `str, Enum` mixin, values are lowercase strings):
+  - `ActionType`: `READ_FILE="read_file"`, `EDIT_FILE="edit_file"`, `WRITE_FILE="write_file"`, `RUN_SHELL="run_shell"`, `RUN_TESTS="run_tests"`, `GIVE_UP="give_up"`
+  - `FeedbackType`: `COMPILE_ERROR="compile_error"`, `ASSERTION_FAILURE="assertion_failure"`, `ENVIRONMENT_ERROR="environment_error"`, `TIMEOUT="timeout"`, `PASS="pass"`, `UNKNOWN="unknown_failure"`
+- Dataclasses with defaults:
+  - `Task(test_path: str, workspace: str)` — no defaults
+  - `Action(type: ActionType, params: dict[str, Any], reasoning: str = "")`
+  - `ActionResult(success: bool, output: str = "", error: str | None = None)`
+  - `TestResult(exit_code: int, stdout: str, stderr: str, passed: bool)` — no defaults
+  - `ClassifiedFeedback(type: FeedbackType, location: str | None = None, message: str | None = None, expected: str | None = None, actual: str | None = None, strategy_hint: str = "")`
+  - `Result(success: bool, rounds: int, reason: str, action_history: list[Action] = field(default_factory=list))`
+  - `GuardrailResult(blocked: bool, reason: str = "")`
+- Note: Config is passed to AgentLoop constructor, not embedded in Task
 
 **Verification (TDD):**
 1. Write `tests/test_models.py` — 7 tests: create each dataclass, verify fields and enum values

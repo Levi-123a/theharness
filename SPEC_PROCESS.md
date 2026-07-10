@@ -141,3 +141,75 @@ brainstorming 完成后，触发 `writing-plans` 技能。该技能要求：
 - **优点**：task 颗粒度合适，依赖关系清晰，TDD 步骤明确
 - **不足**：部分 task 的实现要点描述较精炼，可能需要 subagent 在执行时参考 SPEC 补充细节
 - **预期风险**：Task 11（Agent Main Loop）依赖 8 个前置 task，是集成点，最可能暴露 spec 不清晰之处
+
+---
+
+## 6. 冷启动验证（§4.5）
+
+### 6.1 操作过程
+
+- **验证智能体**：code-explorer subagent（与主开发智能体不同）
+- **对话历史**：不提供任何先前会话或 memory
+- **提供材料**：仅 `SPEC.md` + `PLAN.md`
+- **指定任务**：Task 1（Project Scaffolding）和 Task 2（Data Models）
+- **指令**：遇到不确定之处即暂停询问，而非凭猜测继续
+
+### 6.2 陌生智能体暴露的 spec 缺陷
+
+subagent 在仅凭 SPEC+PLAN 尝试实现时，发现了 **7 处歧义**：
+
+| # | 歧义 | 严重程度 | 修订措施 |
+|---|------|---------|---------|
+| 1 | Config 字段在 SPEC(3个) 与 PLAN(5个) 之间不一致 | 高 | 修订 SPEC §6.1，补充 `workspace` 和 `test_timeout` 字段 |
+| 2 | Task 数据类：SPEC 有 `config` 字段，PLAN 省略 | 高 | 修订 SPEC §6.1，移除 Task 的 config 字段（config 传入 AgentLoop 构造函数） |
+| 3 | 枚举值未指定（字符串还是自动分配） | 中 | 修订 PLAN Task 2，明确使用 `str, Enum` 混入，值为小写字符串 |
+| 4 | FeedbackType.UNKNOWN 的值是 "unknown" 还是 "unknown_failure" | 中 | 统一为 `"unknown_failure"`（与 SPEC §3.5.2 一致） |
+| 5 | 数据类 type 字段标注为枚举还是 str | 中 | 使用 `str, Enum` 混入，字段标注为枚举类型（运行时兼容 str） |
+| 6 | 可选字段默认值未指定 | 中 | 修订 PLAN Task 2，明确所有默认值 |
+| 7 | pyproject.toml 构建后端未指定 | 低 | PLAN Task 1 已含 setuptools，无需修订 |
+
+### 6.3 关键 diff（修订前后）
+
+**SPEC §6.1 Config 修订前：**
+```
+Config
+├── max_rounds: int         # 默认 5
+├── llm_provider: str       # "openai" | "mock"
+└── model: str              # "gpt-4o-mini" 等
+```
+
+**SPEC §6.1 Config 修订后：**
+```
+Config
+├── max_rounds: int         # 默认 5
+├── llm_provider: str       # "openai" | "mock"
+├── model: str              # "gpt-4o-mini" 等
+├── workspace: str          # 默认 "."
+└── test_timeout: int       # 默认 30
+```
+
+**SPEC §6.1 Task 修订前：**
+```
+Task
+├── test_path: str
+├── workspace: str
+└── config: Config
+```
+
+**SPEC §6.1 Task 修订后：**
+```
+Task
+├── test_path: str
+└── workspace: str
+```
+（Config 传入 AgentLoop 构造函数，不内嵌于 Task）
+
+### 6.4 反思
+
+冷启动验证是整个 spec 工作中**最有价值的反馈信号**。它暴露了 7 处歧义，其中 2 处是高严重程度（数据模型不一致）。这些歧义在主 agent 与我的对话中从未浮现——因为主 agent 和我共享了大量隐性上下文，它"知道"我的意图，所以不会质疑。一个全新的 agent 没有这些隐性上下文，所以会在每一个未明文写下的假设处受阻。
+
+**关键教训**：
+1. SPEC 和 PLAN 之间的数据模型必须完全一致——不能在 SPEC 写 3 个字段、在 PLAN 写 5 个字段
+2. 枚举的字符串值必须显式指定，不能假设实现者会"猜对"
+3. 可选字段的默认值必须在 PLAN 中明确，不能留给实现者自行决定
+4. 冷启动验证应该在 SPEC 和 PLAN 完成后立即执行，而不是等到实现阶段才发现问题

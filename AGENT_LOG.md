@@ -58,3 +58,28 @@
   - writing-plans 技能的 task 结构非常清晰（Files → TDD steps → Commit），适合 subagent 执行
   - 依赖图和并行标注对后续 worktree 并行开发至关重要
   - PLAN.md 需要持续更新（每完成一个 task 标记完成并附 commit hash）
+
+---
+
+## 2026-07-10 15:07 — 冷启动验证（§4.5）
+
+- **时间戳**：2026-07-10 15:07
+- **阶段**：冷启动验证
+- **触发的 Superpowers 技能**：`subagent-driven-development`（用于派发陌生 subagent）
+- **验证智能体**：code-explorer subagent（与主开发智能体不同）
+- **提供材料**：仅 `SPEC.md` + `PLAN.md`，无对话历史
+- **指定任务**：Task 1（Project Scaffolding）和 Task 2（Data Models）
+- **subagent 发现的 spec 缺陷**：7 处歧义
+  1. Config 字段在 SPEC(3个) 与 PLAN(5个) 之间不一致 → 修订 SPEC §6.1
+  2. Task 数据类：SPEC 有 config 字段，PLAN 省略 → 修订 SPEC §6.1，移除 config
+  3. 枚举值未指定 → 修订 PLAN Task 2，明确 `str, Enum` 混入和小写字符串值
+  4. FeedbackType.UNKNOWN 值歧义 → 统一为 `"unknown_failure"`
+  5. 数据类 type 字段标注歧义 → 使用 `str, Enum` 混入
+  6. 可选字段默认值未指定 → 修订 PLAN Task 2，明确所有默认值
+  7. pyproject.toml 构建后端未指定 → PLAN Task 1 已含 setuptools，无需修订
+- **人工干预**：根据 subagent 反馈修订 SPEC.md §6.1 和 PLAN.md Task 2
+- **学到的教训**：
+  - 冷启动验证是 spec 工作中最有价值的反馈信号
+  - 主 agent 与用户共享隐性上下文，不会质疑未明文的假设
+  - 全新 agent 没有隐性上下文，会在每个未明文假设处受阻
+  - SPEC 和 PLAN 之间的数据模型必须完全一致
