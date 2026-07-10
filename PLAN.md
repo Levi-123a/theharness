@@ -36,7 +36,11 @@ Task 1 (Scaffolding)
 
 ---
 
-## Task 1: Project Scaffolding
+## Task 1: Project Scaffolding ✅
+
+**Completed:** 2026-07-10
+**Commit:** `240c07b` (merge: `3a4e668`)
+**Notes:** TDD RED→GREEN, two-stage code review passed. Fixed build-backend from `setuptools.backends._legacy:_legacy` to `setuptools.build_meta` per reviewer. Commented out `project.scripts` entry point (Task 12 not yet implemented).
 
 **Goal:** Create package structure, pyproject.toml, and base Config dataclass.
 

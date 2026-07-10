@@ -83,3 +83,33 @@
   - 主 agent 与用户共享隐性上下文，不会质疑未明文的假设
   - 全新 agent 没有隐性上下文，会在每个未明文假设处受阻
   - SPEC 和 PLAN 之间的数据模型必须完全一致
+
+---
+
+## 2026-07-10 16:41 — 步骤3重启：using-git-worktrees + Task 1 实现
+
+- **时间戳**：2026-07-10 16:41
+- **阶段**：实现工作流（§4.6）
+- **触发的 Superpowers 技能**：`using-git-worktrees` → `test-driven-development` → `requesting-code-review` → `finishing-a-development-branch`
+- **背景**：发现之前实现未遵循 Superpowers 7 步工作流（步骤 3/6/7 缺失，步骤 4 部分缺失）。用户要求"彻底重新开始,重新启动步骤3"。已将之前完整实现备份到 `reference/implementation` 分支，main 重置到 `bec9eca`（冷启动验证后）。
+- **工作流偏离记录（§3.6）**：
+  - **偏离**：subagent-driven-development 步骤中，实现由主 agent 而非 subagent 完成
+  - **原因**：可用的 `code-explorer` subagent 仅有搜索/读取能力，无文件写入能力；`code-reviewer` subagent 仅用于评审
+  - **适配方案**：主 agent 在 worktree 中执行 TDD 实现；`code-reviewer` subagent 执行两阶段评审（spec 合规 + 代码质量）
+- **Task 1 执行过程**：
+  1. **git worktree 创建**：`git worktree add .worktrees/task-1-scaffolding -b feature/task-1-scaffolding`
+  2. **TDD RED**：编写 `tests/test_config.py`（2 个测试：默认值 + 自定义值），运行 pytest 确认失败（`ModuleNotFoundError: No module named 'the_harness'`）
+  3. **TDD GREEN**：实现 `pyproject.toml`、`the_harness/__init__.py`、`the_harness/config.py`，运行 `pip install -e .[dev]` + pytest 确认通过（2 passed）
+  4. **提交**：`240c07b` — `feat: project scaffolding with config dataclass`
+  5. **两阶段评审**（code-reviewer subagent）：
+     - Stage 1 spec 合规：PASS（5/5 检查通过）
+     - Stage 2 代码质量：FAIL → 修复后 PASS
+     - **关键问题**：`pyproject.toml` 构建后端 `setuptools.backends._legacy:_legacy` 错误，改为 `setuptools.build_meta`
+     - **非阻塞建议**：注释掉 `project.scripts` 入口点（Task 12 尚未实现）→ 已采纳
+  6. **修正提交**：amend 到 `240c07b`
+  7. **finishing-a-development-branch**：`git merge --no-ff` 合并回 main（`3a4e668`）
+- **commit hash**：`240c07b`（feature 分支）→ `3a4e668`（main merge）
+- **学到的教训**：
+  - code-reviewer subagent 发现了主 agent 遗漏的构建后端配置错误，证明两阶段评审的价值
+  - TDD RED→GREEN 循环在小 task 上非常高效
+  - worktree 隔离确保了实现不影响 main 分支稳定性
