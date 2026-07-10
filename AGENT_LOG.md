@@ -34,3 +34,5 @@
   - brainstorming 技能在引导设计决策方面非常有效，分块呈现让用户能逐步审查
   - 但 brainstorming 本身不会主动检查设计是否覆盖了外部规范的所有要求——这需要人工对照 TASK.md 逐项检查
   - "设计确认"和"规范合规检查"是两个不同的步骤，不能合并
+- **commit hash**：`30643f9` — `docs: add SPEC.md, AGENT_LOG.md, README.md, .gitignore - brainstorming phase complete`
+- **推送状态**：已推送到 `https://github.com/Levi-123a/theharness.git` main 分支
