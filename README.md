@@ -1,1 +1,124 @@
-# theharness
+# the-harness
+
+A self-implemented Coding Agent Harness focused on the **feedback loop** mechanism. Given a failing test, the agent autonomously explores the codebase, modifies code, runs tests, classifies failures, and self-corrects through multiple rounds until tests pass.
+
+## Features
+
+- **Agent Main Loop**: Self-implemented orchestration (context → LLM → action → feedback → stop)
+- **Feedback Loop (Core Contribution)**: Deterministic test validator → failure classifier (5 types) → feedback injector
+- **Guardrails**: 5 categories of dangerous action interception with HITL approval
+- **Memory**: Project context, session history, failure pattern accumulation
+- **Credential Management**: AES-256 encrypted storage with master password
+- **WebUI**: Terminal-style streaming output with session history sidebar
+- **Mock LLM**: Deterministic unit testing without network or real LLM
+
+## Installation
+
+### Docker (Recommended)
+
+```bash
+docker build -t the-harness .
+docker run -p 8000:8000 -v ~/.the-harness:/root/.the-harness the-harness
+```
+
+First run will guide you through secure API key setup.
+
+### From Source
+
+```bash
+git clone https://github.com/<username>/the-harness.git
+cd the-harness
+pip install -e .
+```
+
+## API Key Security Configuration
+
+On first run, the harness will prompt you to:
+1. Set a master password (hidden input via `getpass`)
+2. Enter your OpenAI API key (hidden input)
+
+Keys are encrypted with AES-256 and stored in `~/.the-harness/credentials.enc`.
+- Master password is never persisted to disk
+- `status` command shows "configured" without revealing the key
+- Update/clear keys via the settings interface
+
+**Threat model**: See [SPEC.md](./SPEC.md) §4.2 for the full credential threat model.
+
+## Usage
+
+### WebUI
+
+1. Open `http://localhost:8000` in your browser
+2. Enter the path to your failing test
+3. Click "Start Fix"
+4. Watch the agent work in real-time
+
+### CLI
+
+```bash
+python -m the_harness --test-path path/to/test_file.py --workspace ./project
+```
+
+## Mechanism Demo
+
+```bash
+python demo.py
+```
+
+Deterministically reproduces:
+1. Guardrail intercepts a dangerous action
+2. Feedback loop drives self-correction (failure → fix → pass)
+3. Failure classification + strategy routing (4 failure types)
+
+## Testing
+
+```bash
+make test
+# or
+pytest
+```
+
+All core mechanism tests use mock LLM — no network or real API key required.
+
+## Project Structure
+
+```
+the-harness/
+├── the_harness/           # Main package
+│   ├── agent_loop.py      # Agent main loop
+│   ├── llm/               # LLM abstraction layer
+│   ├── tools/             # Tool dispatch
+│   ├── guardrail/         # Guardrails
+│   ├── feedback/          # Feedback loop (core)
+│   ├── memory/            # Memory store
+│   ├── credentials/       # Credential management
+│   └── webui/             # WebUI (FastAPI)
+├── tests/                 # TDD tests
+├── demo.py                # Mechanism demo
+├── Dockerfile
+├── pyproject.toml
+├── .github/workflows/    # CI configuration
+├── SPEC.md                # Design document
+├── PLAN.md                # Implementation plan
+├── SPEC_PROCESS.md        # Brainstorming process
+├── AGENT_LOG.md           # Development log
+└── REFLECTION.md          # Reflection report
+```
+
+## Security Boundaries
+
+- All file operations are restricted to the workspace directory
+- Dangerous shell commands are intercepted and require approval
+- API keys are encrypted at rest, never logged, never committed to git
+- Shell execution is isolated to the workspace
+
+## Known Limitations
+
+- **Platform**: Linux x86_64 (Docker); Python 3.12+ required for source install
+- **Test framework**: Currently supports pytest only
+- **LLM provider**: OpenAI by default; mock provider for testing
+- **Concurrency**: Single fix task at a time
+
+## License
+
+MIT
