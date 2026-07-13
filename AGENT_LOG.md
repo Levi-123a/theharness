@@ -265,3 +265,22 @@
 - **学到的教训**：
   - 正则的非贪婪匹配 `.+?` 与可选组 `(?:...)?` 组合时，引擎会取最短匹配导致可选组被跳过——应拆分为独立正则
   - 规范中的字符串匹配要精确：`"timeout"` 和 `"timed out"` 是不同的子串，需同时覆盖
+
+---
+
+## 2026-07-13 10:22 — Task 9 实现：Feedback Injector
+
+- **时间戳**：2026-07-13 10:22
+- **阶段**：实现工作流（§4.6）
+- **触发的 Superpowers 技能**：`using-git-worktrees` → `test-driven-development` → `requesting-code-review` → `finishing-a-development-branch`
+- **Task 9 执行过程**：
+  1. **git worktree 创建**：`.worktrees/task-9-injector` → `feature/task-9-injector`
+  2. **TDD RED→GREEN**：6 个测试 → 实现 `the_harness/feedback/injector.py`（`FeedbackInjector` + 6 种类型路由），6 passed
+  3. **提交**：`dc38330`
+  4. **两阶段评审**（code-reviewer subagent）：
+     - Stage 1 spec 合规：PASS（有轻微偏差：TIMEOUT 格式冗余）
+     - Stage 2 代码质量：PASS
+     - Important issue：TIMEOUT 输出 "timed out" 出现两次，已修复为 `f"Test timed out: {msg}."`
+     - Important issue：测试未验证 strategy_hint 包含，已新增 `test_inject_includes_strategy_hint`
+  5. **finishing-a-development-branch**：`git merge --no-ff` 合并回 main（`c451b3c`）
+- **commit hash**：`5ef6151`（feature 分支）→ `c451b3c`（main merge）

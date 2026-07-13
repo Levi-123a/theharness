@@ -280,7 +280,11 @@ Task 1 (Scaffolding)
 
 ---
 
-## Task 9: Feedback Injector
+## Task 9: Feedback Injector ✅
+
+**Completed:** 2026-07-13
+**Commit:** `c451b3c` (merge: `5ef6151`)
+**Notes:** TDD RED→GREEN, two-stage code review passed. Fixed TIMEOUT format redundancy per reviewer. Added `test_inject_includes_strategy_hint` test per reviewer.
 
 **Goal:** Implement feedback injector that converts ClassifiedFeedback into structured prompt fragments for the next LLM round.
 
