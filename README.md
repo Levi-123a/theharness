@@ -17,6 +17,10 @@ A self-implemented Coding Agent Harness focused on the **feedback loop** mechani
 ### Docker (Recommended)
 
 ```bash
+# Build and run
+make docker-build
+make docker-run
+# Or manually:
 docker build -t the-harness .
 docker run -p 8000:8000 -v ~/.the-harness:/root/.the-harness the-harness
 ```
@@ -26,9 +30,9 @@ First run will guide you through secure API key setup.
 ### From Source
 
 ```bash
-git clone https://github.com/<username>/the-harness.git
+git clone https://github.com/Levi-123a/theharness.git
 cd the-harness
-pip install -e .
+make install   # or: pip install -e ".[dev]"
 ```
 
 ## API Key Security Configuration
@@ -79,6 +83,17 @@ pytest
 ```
 
 All core mechanism tests use mock LLM — no network or real API key required.
+
+## Distribution Commands
+
+| Command | Description |
+|---------|-------------|
+| `make install` | Install package + dev dependencies |
+| `make test` | Run all tests |
+| `make run` | Start WebUI server (localhost:8000) |
+| `make demo` | Run 3 mechanism demonstrations |
+| `make docker-build` | Build Docker image |
+| `make docker-run` | Run Docker container |
 
 ## Project Structure
 
