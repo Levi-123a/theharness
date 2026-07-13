@@ -113,3 +113,30 @@
   - code-reviewer subagent 发现了主 agent 遗漏的构建后端配置错误，证明两阶段评审的价值
   - TDD RED→GREEN 循环在小 task 上非常高效
   - worktree 隔离确保了实现不影响 main 分支稳定性
+
+---
+
+## 2026-07-13 09:00 — Task 2 实现：Data Models
+
+- **时间戳**：2026-07-13 09:00
+- **阶段**：实现工作流（§4.6）
+- **触发的 Superpowers 技能**：`using-git-worktrees` → `test-driven-development` → `requesting-code-review` → `finishing-a-development-branch`
+- **Task 2 执行过程**：
+  1. **git worktree 创建**：`.worktrees/task-2-data-models` → `feature/task-2-data-models`
+  2. **基线验证**：安装包，运行 Task 1 测试（2 passed）
+  3. **TDD RED**：编写 `tests/test_models.py`（8 个测试：2 枚举 + 6 数据类），运行 pytest 确认失败（`ModuleNotFoundError: No module named 'the_harness.models'`）
+  4. **TDD GREEN**：实现 `the_harness/models.py`（2 枚举 + 7 数据类），运行 pytest 确认通过（10 passed）
+  5. **预防性修复**：`TestResult` 类名以 "Test" 开头导致 pytest 警告，添加 `__test__ = False`
+  6. **提交**：`aca8b06`
+  7. **两阶段评审**（code-reviewer subagent）：
+     - Stage 1 spec 合规：FAIL → 修复后 PASS
+     - **关键问题**：`GuardrailResult` 缺少测试覆盖（PLAN 要求测试每个数据类）
+     - **修复**：添加 `test_guardrail_result_dataclass` 测试
+     - Stage 2 代码质量：PASS（6/6 检查通过）
+  8. **修正提交**：amend 到 `aca8b06`
+  9. **finishing-a-development-branch**：`git merge --no-ff` 合并回 main（`45088e9`）
+- **commit hash**：`aca8b06`（feature 分支）→ `45088e9`（main merge）
+- **学到的教训**：
+  - 评审发现的 `GuardrailResult` 测试遗漏说明 PLAN.md 中"create each dataclass"的要求需要逐字对照
+  - `__test__ = False` 是处理 pytest 与 "Test*" 类名冲突的标准模式
+  - 意外提交的 `test_output.txt` 提醒需要将临时文件加入 .gitignore
