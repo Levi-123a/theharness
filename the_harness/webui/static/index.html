@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>the-harness — Coding Agent WebUI</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="app">
+        <aside id="sidebar">
+            <h2>Sessions</h2>
+            <ul id="session-list"></ul>
+        </aside>
+        <main id="main">
+            <div id="terminal"></div>
+            <div id="input-bar">
+                <input type="text" id="test-path" placeholder="tests/test_foo.py">
+                <input type="text" id="workspace" placeholder="/path/to/workspace">
+                <button id="start-btn">Start Fix</button>
+            </div>
+        </main>
+    </div>
+    <script src="/static/app.js"></script>
+</body>
+</html>
