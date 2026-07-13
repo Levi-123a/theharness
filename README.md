@@ -179,6 +179,8 @@ Deploy to any container platform (Render / Railway / Fly.io / Alibaba Cloud):
 # 4. Set environment variable: OPENAI_API_KEY (or use credential CLI)
 ```
 
+**Render.com one-click deploy:** The `render.yaml` file in the repo root provides a Render Blueprint for automatic deployment. Connect your GitHub repo to Render, and it will auto-detect the configuration.
+
 ### CI/CD Pipeline
 
 | Platform | Config File | Jobs |
