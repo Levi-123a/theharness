@@ -383,3 +383,25 @@
 - **学到的教训**：
   - 测试数据必须匹配实际的 regex 模式——`AssertionError:` 文本不等于 `assert X == Y` 格式
   - demo.py 的 3 个演示覆盖了 harness 的 3 个核心机制：护栏拦截、反馈闭环、分类路由
+
+---
+
+## 2026-07-13 12:50 — Task 14 实现：Docker + CI/CD
+
+- **时间戳**：2026-07-13 12:50
+- **阶段**：实现工作流（§4.6）
+- **触发的 Superpowers 技能**：`using-git-worktrees` → `finishing-a-development-branch`
+- **Task 14 执行过程**：
+  1. **git worktree 创建**：`.worktrees/task-14-docker` → `feature/task-14-docker`
+  2. **创建文件**：
+     - `Dockerfile`：基于 `python:3.12-slim`，`pip install -e .`，暴露 8000 端口，CMD `uvicorn the_harness.webui:app`
+     - `.github/workflows/ci.yml`：Job `unit-test`（checkout → setup Python 3.12 → pip install -e .[dev] → pytest）+ Job `docker-build`（depends on unit-test，docker build + push on main）
+     - `Makefile`：`test`/`run`/`docker-build`/`docker-run`/`demo`/`install` targets
+  3. **更新 README.md**：添加分发命令表格，更新 git clone URL
+  4. **取消注释 pyproject.toml 入口点**：`the-harness = "the_harness.webui.app:app"`
+  5. **验证**：82 tests passed（无回归）
+  6. **finishing-a-development-branch**：`git merge --no-ff` 合并回 main
+- **commit hash**：`47f11ce`（feature 分支）→ main merge
+- **学到的教训**：
+  - CI 的 job 名称必须与规范要求完全一致（`unit-test`）
+  - Dockerfile 应该先 copy `pyproject.toml` 再 copy 源码，利用 Docker layer cache 加速构建

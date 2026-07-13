@@ -470,7 +470,11 @@ Task 1 (Scaffolding)
 
 ---
 
-## Task 14: Docker + CI/CD
+## Task 14: Docker + CI/CD ✅
+
+**Completed:** 2026-07-13
+**Commit:** `47f11ce` (merge: `HEAD`)
+**Notes:** Created Dockerfile (python:3.12-slim, pip install -e ., expose 8000, CMD uvicorn), GitHub Actions CI (unit-test + docker-build jobs), Makefile (test/run/docker-build/demo/install targets). Updated README with distribution commands table. Uncommented pyproject.toml entry point.
 
 **Goal:** Create Dockerfile, GitHub Actions CI config, and deployment setup.
 
