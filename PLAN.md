@@ -315,7 +315,11 @@ Task 1 (Scaffolding)
 
 ---
 
-## Task 10: Memory Store
+## Task 10: Memory Store ✅
+
+**Completed:** 2026-07-13
+**Commit:** `3289958` (merge: `9f104a4`)
+**Notes:** TDD RED→GREEN, two-stage code review passed. Added `__init__.py` exports, JSON error handling, explicit SQLite connection close, PRAGMA foreign_keys per reviewer. Removed accidentally committed `pytest_out.txt`.
 
 **Goal:** Implement memory store with project context, session history (SQLite), and failure patterns.
 

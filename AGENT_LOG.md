@@ -284,3 +284,25 @@
      - Important issue：测试未验证 strategy_hint 包含，已新增 `test_inject_includes_strategy_hint`
   5. **finishing-a-development-branch**：`git merge --no-ff` 合并回 main（`c451b3c`）
 - **commit hash**：`5ef6151`（feature 分支）→ `c451b3c`（main merge）
+
+---
+
+## 2026-07-13 10:31 — Task 10 实现：Memory Store
+
+- **时间戳**：2026-07-13 10:31
+- **阶段**：实现工作流（§4.6）
+- **触发的 Superpowers 技能**：`using-git-worktrees` → `test-driven-development` → `requesting-code-review` → `finishing-a-development-branch`
+- **Task 10 执行过程**：
+  1. **git worktree 创建**：`.worktrees/task-10-memory` → `feature/task-10-memory`
+  2. **TDD RED→GREEN**：6 个测试 → 实现 `the_harness/memory/store.py`（`MemoryStore` + SQLite + JSON），5/6 通过
+  3. **修复**：`project_context.json` 保存在 `.harness/` 子目录，测试断言路径不匹配，更新测试
+  4. **提交**：`b82cee2`
+  5. **两阶段评审**（code-reviewer subagent）：
+     - Stage 1 spec 合规：PASS（10/10 检查通过）
+     - Stage 2 代码质量：PASS
+     - 无 Critical issue，采纳 3 个建议：`__init__.py` 导出 MemoryStore、JSON 读取异常保护、SQLite 显式连接关闭 + PRAGMA foreign_keys
+  6. **finishing-a-development-branch**：`git merge --no-ff` 合并回 main（`3289958`）
+- **commit hash**：`9f104a4`（feature 分支）→ `3289958`（main merge）
+- **学到的教训**：
+  - SQLite 的 `with` 上下文管理器只负责 commit/rollback，不关闭连接——需用 `try/finally + conn.close()`
+  - 意外提交 `pytest_out.txt` 再次发生——需确保 `.gitignore` 覆盖所有测试输出文件名变体
