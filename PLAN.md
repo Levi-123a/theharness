@@ -439,7 +439,11 @@ Task 1 (Scaffolding)
 
 ---
 
-## Task 13: Mechanism Demo Script
+## Task 13: Mechanism Demo Script ✅
+
+**Completed:** 2026-07-13
+**Commit:** `4b3a8a2` (merge: `HEAD`)
+**Notes:** TDD RED→GREEN, 3 tests + demo.py with 3 deterministic demonstrations (guardrail interception, feedback self-correction, failure classification routing). All use MockLLMProvider, exit code 0. Fixed test data for assertion_failure to match classifier's `assert X == Y` regex pattern.
 
 **Goal:** Create `demo.py` that deterministically reproduces 3 mechanism behaviors under mock LLM (§A.6 requirement).
 

@@ -365,3 +365,21 @@
   - "实时流式"不能靠批量收集后发送——必须用线程安全队列实现真正的逐事件传递
   - 不应从外部访问对象的私有属性——应在构造时注入包装器，保持封装完整性
   - `__init__.py` 中 `from module import app` 会导致 `app` 属性遮蔽子模块，测试中需用 `importlib.import_module()` 绕过
+
+---
+
+## 2026-07-13 12:30 — Task 13 实现：Demo Script
+
+- **时间戳**：2026-07-13 12:30
+- **阶段**：实现工作流（§4.6）
+- **触发的 Superpowers 技能**：`using-git-worktrees` → `test-driven-development` → `finishing-a-development-branch`
+- **Task 13 执行过程**：
+  1. **git worktree 创建**：`.worktrees/task-13-demo` → `feature/task-13-demo`
+  2. **TDD RED→GREEN**：3 个测试 → 实现 `demo.py`（3 个确定性演示），82 passed
+  3. **修复**：`assertion_failure` 测试数据从 `AssertionError: expected 5 got 3` 改为 `assert 5 == 3`，因为 classifier 的 `_RE_ASSERT` 正则匹配 `assert X == Y` 格式
+  4. **验证**：`python demo.py` 退出码 0，3/3 演示通过
+  5. **finishing-a-development-branch**：`git merge --no-ff` 合并回 main
+- **commit hash**：`4b3a8a2`（feature 分支）→ main merge
+- **学到的教训**：
+  - 测试数据必须匹配实际的 regex 模式——`AssertionError:` 文本不等于 `assert X == Y` 格式
+  - demo.py 的 3 个演示覆盖了 harness 的 3 个核心机制：护栏拦截、反馈闭环、分类路由
