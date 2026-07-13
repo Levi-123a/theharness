@@ -399,7 +399,11 @@ Task 1 (Scaffolding)
 
 ---
 
-## Task 12: WebUI
+## Task 12: WebUI ✅
+
+**Completed:** 2026-07-13
+**Commit:** `c00f251` (merge: `HEAD`)
+**Notes:** TDD RED→GREEN, two-stage code review found 2 Critical issues: (1) WebSocket was not real-time streaming (events batched after loop completion) — fixed with thread-safe `queue.Queue` for real-time event passing; (2) Directly accessing AgentLoop private attributes — fixed by wrapping LLM/validator with emitting decorators BEFORE construction. Also added workspace path traversal protection, feedback event assertion in tests, and session cleanup on WebSocket close.
 
 **Goal:** Implement FastAPI WebUI with terminal-style streaming output and session history sidebar.
 

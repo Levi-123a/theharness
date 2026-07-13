@@ -335,3 +335,33 @@
   - 构造函数参数顺序必须与规范完全一致——多余的参数不仅增加复杂度，还打乱了位置参数的使用
   - 工具执行结果不能被丢弃——静默忽略失败会导致 agent 在错误状态下继续运行
   - code-reviewer subagent 的两阶段评审在核心模块上价值最大，发现了主 agent 遗漏的接口合规问题
+
+---
+
+## 2026-07-13 12:06 — Task 12 实现：WebUI
+
+- **时间戳**：2026-07-13 12:06
+- **阶段**：实现工作流（§4.6）
+- **触发的 Superpowers 技能**：`using-git-worktrees` → `test-driven-development` → `requesting-code-review` → `finishing-a-development-branch`
+- **Task 12 执行过程**：
+  1. **git worktree 创建**：`.worktrees/task-12-webui` → `feature/task-12-webui`
+  2. **TDD RED→GREEN**：5 个测试 → 实现 `the_harness/webui/`（FastAPI + WebSocket + 静态前端），79 passed
+  3. **两阶段评审**（code-reviewer subagent）发现 2 个 Critical + 5 个 Important：
+     - **Critical #1**：WebSocket 不是实时流式输出——事件被批量收集到列表中，循环结束后才发送
+     - **Critical #2**：直接访问和替换 AgentLoop 的私有属性（`loop._llm`、`loop._validator`）
+  4. **修复 Critical issues**：
+     - 使用 `queue.Queue`（线程安全）实现真正的实时事件传递：工作线程通过 `_EmittingLLM`/`_EmittingValidator` 往队列写入事件，主协程通过 `asyncio.to_thread(queue.get, timeout=0.1)` 消费并立即发送
+     - 将 emitting 包装器在构造 AgentLoop 之前注入，而非事后 monkey-patch 私有属性
+  5. **修复 Important issues**：
+     - 添加 `feedback` 事件断言到 `test_websocket_receives_events`
+     - 添加 `_validate_workspace()` 路径遍历防护
+     - WebSocket 关闭时清理 `_sessions` 内存字典
+     - 移除未使用的导入和死代码
+  6. **验证**：5 tests passed，79 total passed（无回归）
+  7. **amend 提交**：`c00f251`
+  8. **finishing-a-development-branch**：`git merge --no-ff` 合并回 main
+- **commit hash**：`c00f251`（feature 分支）→ main merge
+- **学到的教训**：
+  - "实时流式"不能靠批量收集后发送——必须用线程安全队列实现真正的逐事件传递
+  - 不应从外部访问对象的私有属性——应在构造时注入包装器，保持封装完整性
+  - `__init__.py` 中 `from module import app` 会导致 `app` 属性遮蔽子模块，测试中需用 `importlib.import_module()` 绕过
