@@ -245,7 +245,11 @@ Task 1 (Scaffolding)
 
 ---
 
-## Task 8: Failure Classifier
+## Task 8: Failure Classifier ✅
+
+**Completed:** 2026-07-13
+**Commit:** `a8f88cc` (merge: `1818fd1`)
+**Notes:** TDD RED→GREEN, two-stage code review passed. Fixed critical issue: "timed out" → also check "timeout" per spec. Added `test_classify_timeout_by_stderr_only` test. Split `_RE_SYNTAX` into two patterns for correct location extraction.
 
 **Goal:** Implement failure classifier that categorizes TestResult into 5 types using regex. This is the core of the feedback loop.
 

@@ -241,3 +241,27 @@
 - **学到的教训**：
   - `TestValidator` 类名以 "Test" 开头同样触发 pytest 收集警告，与 `TestResult` 一样需要 `__test__=False`
   - Reviewer 建议添加 FileNotFoundError 测试是好的实践——规格要求实现该分支但未要求测试，补充测试能防止未来重构破坏
+
+---
+
+## 2026-07-13 10:10 — Task 8 实现：Failure Classifier
+
+- **时间戳**：2026-07-13 10:10
+- **阶段**：实现工作流（§4.6）
+- **触发的 Superpowers 技能**：`using-git-worktrees` → `test-driven-development` → `requesting-code-review` → `finishing-a-development-branch`
+- **Task 8 执行过程**：
+  1. **git worktree 创建**：`.worktrees/task-8-classifier` → `feature/task-8-classifier`
+  2. **TDD RED**：编写 `tests/test_classifier.py`（9 个测试），确认 `ModuleNotFoundError` 失败
+  3. **TDD GREEN**：实现 `the_harness/feedback/classifier.py`（`FailureClassifier` + 6 个正则模式 + 6 个 strategy_hint），8/9 通过
+  4. **修复**：`_RE_SYNTAX` 正则的非贪婪匹配与可选组冲突导致 location 提取失败，拆分为 `_RE_SYNTAX` + `_RE_LOCATION` 两个独立正则
+  5. **提交**：`cf66e07`
+  6. **两阶段评审**（code-reviewer subagent）：
+     - Stage 1 spec 合规：PASS（发现 1 个 Critical issue：`"timed out"` 与规范要求的 `"timeout"` 不匹配）
+     - Stage 2 代码质量：PASS
+     - Critical issue：timeout 字符串匹配偏差，已修复为同时检查 `"timeout"` 和 `"timed out"`
+     - 新增 `test_classify_timeout_by_stderr_only` 测试（仅靠 stderr 匹配，exit_code != -1）
+  7. **finishing-a-development-branch**：`git merge --no-ff` 合并回 main（`a8f88cc`）
+- **commit hash**：`1818fd1`（feature 分支）→ `a8f88cc`（main merge）
+- **学到的教训**：
+  - 正则的非贪婪匹配 `.+?` 与可选组 `(?:...)?` 组合时，引擎会取最短匹配导致可选组被跳过——应拆分为独立正则
+  - 规范中的字符串匹配要精确：`"timeout"` 和 `"timed out"` 是不同的子串，需同时覆盖
