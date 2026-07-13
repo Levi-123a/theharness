@@ -159,3 +159,26 @@
      - 无关键问题，4 个非阻塞建议（未使用导入、防御性拷贝等）
   6. **finishing-a-development-branch**：`git merge --no-ff` 合并回 main（`86add89`）
 - **commit hash**：`5b97ddc`（feature 分支）→ `86add89`（main merge）
+
+---
+
+## 2026-07-13 09:25 — Task 4 实现：Credential Manager
+
+- **时间戳**：2026-07-13 09:25
+- **阶段**：实现工作流（§4.6）
+- **触发的 Superpowers 技能**：`using-git-worktrees` → `test-driven-development` → `requesting-code-review` → `finishing-a-development-branch`
+- **Task 4 执行过程**：
+  1. **git worktree 创建**：`.worktrees/task-4-credentials` → `feature/task-4-credentials`
+  2. **TDD RED**：编写 `tests/test_credential_manager.py`（6 个测试），确认失败
+  3. **TDD GREEN**：实现 `the_harness/credentials/manager.py`（AES-256-GCM + PBKDF2），发现 `test_wrong_password_fails` 失败
+  4. **Bug 修复**：`unlock()` 未在开始时清除状态，导致 `setup()` 后的错误密码仍保持解锁状态。修复：在 `unlock()` 开始时重置 `_key`、`_data`、`_unlocked`
+  5. **提交**：`f54e36f`
+  6. **两阶段评审**（code-reviewer subagent）：
+     - Stage 1 spec 合规：PASS（6/6 检查通过）
+     - Stage 2 代码质量：PASS（6/6 检查通过）
+     - 无关键问题，8 个非阻塞建议（原子写入、异常细化、setup 检查等）
+  7. **finishing-a-development-branch**：`git merge --no-ff` 合并回 main（`be3dcd3`）
+- **commit hash**：`f54e36f`（feature 分支）→ `be3dcd3`（main merge）
+- **学到的教训**：
+  - TDD 在安全相关代码上特别有价值：`test_wrong_password_fails` 暴露了状态管理 bug
+  - `unlock()` 的状态清除是安全关键：不清除就可能导致锁定后仍可访问

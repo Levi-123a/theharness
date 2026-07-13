@@ -128,7 +128,11 @@ Task 1 (Scaffolding)
 
 ---
 
-## Task 4: Credential Manager
+## Task 4: Credential Manager ✅
+
+**Completed:** 2026-07-13
+**Commit:** `f54e36f` (merge: `be3dcd3`)
+**Notes:** TDD RED→GREEN, two-stage code review passed. Fixed unlock() to clear state before attempting. Removed unused imports per reviewer.
 
 **Goal:** Implement AES-256 encrypted credential storage with master password (PBKDF2 key derivation).
 
