@@ -185,7 +185,11 @@ Task 1 (Scaffolding)
 
 ---
 
-## Task 6: Tool Dispatcher
+## Task 6: Tool Dispatcher ✅
+
+**Completed:** 2026-07-13
+**Commit:** `e4d4a12` (merge: `780e1f1`)
+**Notes:** TDD RED→GREEN, two-stage code review passed. Fixed `py` to `python` for CI portability per reviewer.
 
 **Goal:** Implement file operations (read/write/edit) and shell execution with workspace isolation.
 

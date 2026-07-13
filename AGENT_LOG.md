@@ -201,3 +201,19 @@
      - 无关键问题，5 个非阻塞建议（git clean 变体、系统路径子串匹配等）
   6. **finishing-a-development-branch**：`git merge --no-ff` 合并回 main（`91fcf98`）
 - **commit hash**：`4d01088`（feature 分支）→ `91fcf98`（main merge）
+
+---
+
+## 2026-07-13 09:50 — Task 6 实现：Tool Dispatcher
+
+- **时间戳**：2026-07-13 09:50
+- **阶段**：实现工作流（§4.6）
+- **触发的 Superpowers 技能**：`using-git-worktrees` → `test-driven-development` → `requesting-code-review` → `finishing-a-development-branch`
+- **Task 6 执行过程**：
+  1. **git worktree 创建**：`.worktrees/task-6-tools` → `feature/task-6-tools`
+  2. **TDD RED→GREEN**：8 个测试 → 实现 `the_harness/tools/dispatcher.py`（read/write/edit/shell/give_up），40 passed
+  3. **提交**：`e4d4a12`
+  4. **两阶段评审**：spec 合规 PASS，代码质量 PASS
+  5. **可移植性修复**：`test_shell_failure` 中 `py` → `python`（CI 兼容）
+  6. **finishing-a-development-branch**：合并回 main（`780e1f1`）
+- **commit hash**：`e4d4a12`（feature 分支）→ `780e1f1`（main merge）
