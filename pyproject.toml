@@ -26,6 +26,7 @@ dev = [
 
 [project.scripts]
 the-harness = "the_harness.webui.app:main"
+the-harness-creds = "the_harness.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

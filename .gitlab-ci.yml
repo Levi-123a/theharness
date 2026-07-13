@@ -1,0 +1,32 @@
+# GitLab CI configuration for the-harness
+# Requirement: must contain a job named "unit-test" (TASK.md §五.6)
+
+stages:
+  - test
+  - build
+
+unit-test:
+  stage: test
+  image: python:3.12-slim
+  before_script:
+    - pip install -e ".[dev]"
+  script:
+    - pytest -v --tb=short
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+docker-build:
+  stage: build
+  image: docker:24.0
+  services:
+    - docker:24.0-dind
+  needs:
+    - unit-test
+  script:
+    - docker build -t the-harness:latest .
+    - docker tag the-harness:latest $CI_REGISTRY_IMAGE:latest
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker push $CI_REGISTRY_IMAGE:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"

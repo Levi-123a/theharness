@@ -46,6 +46,27 @@ Keys are encrypted with AES-256 and stored in `~/.the-harness/credentials.enc`.
 - `status` command shows "configured" without revealing the key
 - Update/clear keys via the settings interface
 
+**First-run guided setup (CLI):**
+
+```bash
+the-harness-creds setup
+```
+
+This will:
+1. Prompt for a master password (hidden input, min 8 chars)
+2. Create an encrypted credential store (`~/.the-harness/credentials.enc`)
+3. Optionally store your OpenAI API key (hidden input)
+
+**Credential management commands:**
+
+| Command | Description |
+|---------|-------------|
+| `the-harness-creds setup` | First-run guided credential setup |
+| `the-harness-creds status` | Show configured providers (no plaintext) |
+| `the-harness-creds store` | Add/update an API key |
+| `the-harness-creds delete` | Remove a provider's key |
+| `the-harness-creds unlock` | Unlock credential store |
+
 **Threat model**: See [SPEC.md](./SPEC.md) §4.2 for the full credential threat model.
 
 ## Usage
@@ -94,6 +115,7 @@ All core mechanism tests use mock LLM — no network or real API key required.
 | `make demo` | Run 3 mechanism demonstrations |
 | `make docker-build` | Build Docker image |
 | `make docker-run` | Run Docker container |
+| `the-harness-creds setup` | First-run guided API key setup |
 
 ## Project Structure
 
@@ -101,6 +123,7 @@ All core mechanism tests use mock LLM — no network or real API key required.
 the-harness/
 ├── the_harness/           # Main package
 │   ├── agent_loop.py      # Agent main loop
+│   ├── cli.py             # Credential management CLI
 │   ├── llm/               # LLM abstraction layer
 │   ├── tools/             # Tool dispatch
 │   ├── guardrail/         # Guardrails
@@ -112,7 +135,8 @@ the-harness/
 ├── demo.py                # Mechanism demo
 ├── Dockerfile
 ├── pyproject.toml
-├── .github/workflows/    # CI configuration
+├── .github/workflows/    # GitHub Actions CI
+├── .gitlab-ci.yml         # GitLab CI config
 ├── SPEC.md                # Design document
 ├── PLAN.md                # Implementation plan
 ├── SPEC_PROCESS.md        # Brainstorming process
@@ -120,12 +144,57 @@ the-harness/
 └── REFLECTION.md          # Reflection report
 ```
 
+## Deployment Architecture
+
+### Local Development
+
+```
+Browser  ──HTTP/WS──>  uvicorn (FastAPI)  ──>  AgentLoop  ──>  LLM Provider
+                                              │
+                                    ┌─────────┴──────────┐
+                                    │  ToolDispatcher    │
+                                    │  Guardrail         │
+                                    │  TestValidator     │
+                                    │  FeedbackInjector  │
+                                    │  MemoryStore       │
+                                    └────────────────────┘
+```
+
+### Docker Container
+
+The Docker image (`python:3.12-slim` base) packages the entire application:
+- `docker build` produces a self-contained image
+- `docker run -p 8000:8000` starts the WebUI server
+- Credentials are mounted via volume (`~/.the-harness`)
+
+### Cloud Deployment
+
+Deploy to any container platform (Render / Railway / Fly.io / Alibaba Cloud):
+
+```bash
+# Example: Render.com
+# 1. Connect GitHub repo
+# 2. Set build command: docker build -t the-harness .
+# 3. Set start command: docker run -p 8000:8000 the-harness
+# 4. Set environment variable: OPENAI_API_KEY (or use credential CLI)
+```
+
+### CI/CD Pipeline
+
+| Platform | Config File | Jobs |
+|----------|------------|------|
+| GitHub Actions | `.github/workflows/ci.yml` | `unit-test` (pytest) → `docker-build` (build + push to GHCR) |
+| GitLab CI | `.gitlab-ci.yml` | `unit-test` (pytest) → `docker-build` (build + push to registry) |
+
+CI runs on every push to `main` and every pull request. The `unit-test` job must pass before `docker-build` runs.
+
 ## Security Boundaries
 
 - All file operations are restricted to the workspace directory
 - Dangerous shell commands are intercepted and require approval
-- API keys are encrypted at rest, never logged, never committed to git
+- API keys are encrypted at rest (AES-256-GCM), never logged, never committed to git
 - Shell execution is isolated to the workspace
+- Path traversal prevention: second-layer check in ToolDispatcher ensures resolved paths stay within workspace
 
 ## Known Limitations
 

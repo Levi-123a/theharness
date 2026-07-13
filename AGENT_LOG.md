@@ -429,3 +429,29 @@
   - 所有退出路径（不只是 max-rounds）都应保存会话——否则成功会话和 give-up 会话的历史会丢失
   - `pyproject.toml` 的 `project.scripts` 入口点必须指向可调用对象（函数），而非 ASGI 应用对象——`uvicorn app:app` 和 `the-harness` CLI 命令是不同的使用场景
   - 真实 LLM Provider 的系统提示词需要明确指示 LLM 返回 JSON 格式的 action/params/reasoning，并处理 markdown 代码围栏
+
+---
+
+## 2026-07-13 14:00 — TASK.md 合规修复
+
+- **时间戳**：2026-07-13 14:00
+- **阶段**：合规检查与修复
+- **触发的 Superpowers 技能**：`verification-before-completion`
+- **执行过程**：
+  1. **系统对照 TASK.md 检查所有交付物**，发现以下缺失项：
+     - ❌ `.gitlab-ci.yml`（§五.6 要求 GitLab CI 配置含 `unit-test` job）
+     - ❌ 首次运行引导安全录入 key 的 CLI 交互流程（§3.1）
+     - ❌ README 部署架构与 CI/CD 说明（§4.11）
+  2. **修复 3 项缺失**：
+     - **创建 `.gitlab-ci.yml`**：包含 `unit-test` job（pytest）和 `docker-build` job（Docker 构建+推送），与 GitHub Actions 配置对等
+     - **创建 `the_harness/cli.py`**：交互式凭据管理 CLI，提供 `setup`/`status`/`store`/`delete`/`unlock` 五个子命令，使用 `getpass` 隐藏输入，首次运行引导用户设置主密码（≥8 字符）和 API key
+     - **更新 `pyproject.toml`**：添加 `the-harness-creds` 入口点指向 `the_harness.cli:main`
+     - **更新 `the_harness/__init__.py`**：导出 `cli_main`
+     - **更新 `README.md`**：添加部署架构图（本地/Docker/云部署）、CI/CD 管道说明表、凭据管理命令表、更新项目结构
+     - **编写 `tests/test_cli.py`**：17 个测试覆盖所有 CLI 子命令
+  3. **验证**：99 tests passed（82 原有 + 17 新增），无回归
+- **commit hash**：待提交
+- **学到的教训**：
+  - TASK.md §五.6 明确要求 `.gitlab-ci.yml`（非 `.github/workflows/ci.yml`）——NJU GitLab 使用 GitLab CI，需同时提供两种 CI 配置
+  - §3.1 的"首次运行应能引导用户安全录入 key"要求的是交互式 CLI 流程，而非仅提供 API 方法——`CredentialManager` 有 `setup()`/`store()` 方法但缺少调用它们的 CLI 入口
+  - §4.11 的"README 说明部署架构与 CI/CD"要求在 README 中描述系统架构图和 CI/CD 管道，而非仅在 SPEC 中描述

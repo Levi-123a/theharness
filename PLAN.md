@@ -483,6 +483,13 @@ Task 1 (Scaffolding)
 4. Missing real LLM Provider — created `OpenAILLMProvider` in `the_harness/llm/openai_provider.py`
 5. ToolDispatcher missing workspace boundary second-layer check — added `PermissionError` in `_resolve_path`
 
+**Compliance Fixes (2026-07-13):** Fixed 3 items found by TASK.md compliance check:
+1. Created `.gitlab-ci.yml` — GitLab CI config with `unit-test` job (§五.6 requirement)
+2. Created `the_harness/cli.py` — interactive first-run credential setup CLI with `getpass` hidden input (§3.1 requirement)
+3. Updated `README.md` — added deployment architecture diagram, CI/CD pipeline table, credential CLI commands (§4.11 requirement)
+4. Added `the-harness-creds` entry point in `pyproject.toml`
+5. Added 17 CLI tests in `tests/test_cli.py` — 99 total tests pass
+
 **Goal:** Create Dockerfile, GitHub Actions CI config, and deployment setup.
 
 **Depends on:** All previous tasks
@@ -532,7 +539,7 @@ Task 1 (Scaffolding)
 | 13 | Demo Script | 3 | 11 | Yes (with 12) |
 | 14 | Docker + CI | — | All | — |
 
-**Total: 14 tasks, 77 tests**
+**Total: 14 tasks, 99 tests** (82 original + 17 CLI)
 
 ---
 
