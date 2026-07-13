@@ -41,6 +41,7 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+test_output.txt
 
 # Docker
 docker-compose.override.yml
