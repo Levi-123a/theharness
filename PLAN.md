@@ -348,7 +348,11 @@ Task 1 (Scaffolding)
 
 ---
 
-## Task 11: Agent Main Loop
+## Task 11: Agent Main Loop ✅
+
+**Completed:** 2026-07-13
+**Commit:** `876f41a` (merge: `HEAD`)
+**Notes:** TDD RED→GREEN, two-stage code review found 2 Critical issues: (1) `credential_manager` parameter was dead code not in spec — removed; (2) `tool_dispatcher.execute()` return value was discarded, execution failures silently ignored — now captured with `exec_result.success` check. Also applied optional improvements: broadened `_parse_action` exception handling, simplified `_is_repeated` signature, added `save_session()` call at max-rounds exit.
 
 **Goal:** Implement the agent main loop that orchestrates all components. This is the harness kernel.
 

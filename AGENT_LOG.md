@@ -306,3 +306,32 @@
 - **学到的教训**：
   - SQLite 的 `with` 上下文管理器只负责 commit/rollback，不关闭连接——需用 `try/finally + conn.close()`
   - 意外提交 `pytest_out.txt` 再次发生——需确保 `.gitignore` 覆盖所有测试输出文件名变体
+
+---
+
+## 2026-07-13 11:00 — Task 11 实现：Agent Main Loop
+
+- **时间戳**：2026-07-13 11:00
+- **阶段**：实现工作流（§4.6）
+- **触发的 Superpowers 技能**：`using-git-worktrees` → `test-driven-development` → `requesting-code-review` → `finishing-a-development-branch`
+- **Task 11 执行过程**：
+  1. **git worktree 创建**：`.worktrees/task-11-agent-loop` → `feature/task-11-agent-loop`
+  2. **TDD RED→GREEN**：6 个测试 → 实现 `the_harness/agent_loop.py`（`AgentLoop` + 5 种停机条件），74 passed
+  3. **两阶段评审**（code-reviewer subagent）发现 2 个 Critical issue：
+     - `credential_manager` 参数是死代码且打乱了构造函数位置参数顺序（规范中没有此参数）
+     - `tool_dispatcher.execute(action)` 返回值被丢弃，执行失败被静默忽略
+  4. **修复 Critical issues**：
+     - 移除 `credential_manager` 参数和 `CredentialManager` 导入
+     - 捕获 `exec_result = self._dispatcher.execute(action)`，检查 `exec_result.success`
+  5. **采纳可选改进**：
+     - `_parse_action` except 增加 `AttributeError, TypeError`
+     - `_is_repeated` 移除冗余 `action` 参数
+     - `run()` 结束时调用 `self._memory.save_session()` 保存会话
+  6. **验证**：6 tests passed，74 total passed（无回归）
+  7. **amend 提交**：`876f41a`
+  8. **finishing-a-development-branch**：`git merge --no-ff` 合并回 main
+- **commit hash**：`876f41a`（feature 分支）→ main merge
+- **学到的教训**：
+  - 构造函数参数顺序必须与规范完全一致——多余的参数不仅增加复杂度，还打乱了位置参数的使用
+  - 工具执行结果不能被丢弃——静默忽略失败会导致 agent 在错误状态下继续运行
+  - code-reviewer subagent 的两阶段评审在核心模块上价值最大，发现了主 agent 遗漏的接口合规问题
