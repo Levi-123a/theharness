@@ -217,3 +217,27 @@
   5. **可移植性修复**：`test_shell_failure` 中 `py` → `python`（CI 兼容）
   6. **finishing-a-development-branch**：合并回 main（`780e1f1`）
 - **commit hash**：`e4d4a12`（feature 分支）→ `780e1f1`（main merge）
+
+---
+
+## 2026-07-13 10:00 — Task 7 实现：Test Validator
+
+- **时间戳**：2026-07-13 10:00
+- **阶段**：实现工作流（§4.6）
+- **触发的 Superpowers 技能**：`using-git-worktrees` → `test-driven-development` → `requesting-code-review` → `finishing-a-development-branch`
+- **Task 7 执行过程**：
+  1. **git worktree 创建**：`.worktrees/task-7-validator` → `feature/task-7-validator`
+  2. **TDD RED**：编写 `tests/test_validator.py`（4 个测试），确认 `ModuleNotFoundError` 失败
+  3. **TDD GREEN**：实现 `the_harness/feedback/validator.py`（`TestValidator` + `validate()`），4 passed
+  4. **TDD REFACTOR**：添加 `__test__=False` 消除 `PytestCollectionWarning`，0 warnings
+  5. **提交**：`7eeb976`
+  6. **两阶段评审**（code-reviewer subagent）：
+     - Stage 1 spec 合规：PASS（9/9 检查通过）
+     - Stage 2 代码质量：PASS（无 lint 错误，文档完整）
+     - 无 Critical issue，4 个建议（添加 FileNotFoundError 测试、简化 timeout 断言等）
+  7. **采纳建议**：新增 `test_validate_pytest_not_found`（第 5 个测试），简化 timeout 断言
+  8. **finishing-a-development-branch**：`git merge --no-ff` 合并回 main（`c535bb5`）
+- **commit hash**：`7eeb976`（feature 分支）→ `c535bb5`（main merge）
+- **学到的教训**：
+  - `TestValidator` 类名以 "Test" 开头同样触发 pytest 收集警告，与 `TestResult` 一样需要 `__test__=False`
+  - Reviewer 建议添加 FileNotFoundError 测试是好的实践——规格要求实现该分支但未要求测试，补充测试能防止未来重构破坏
