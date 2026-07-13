@@ -24,8 +24,8 @@ dev = [
     "httpx>=0.27",
 ]
 
-# [project.scripts]
-# the-harness = "the_harness.webui.app:main"  # Task 12: WebUI 实现
+[project.scripts]
+the-harness = "the_harness.webui.app:app"
 
 [tool.setuptools.packages.find]
 where = ["."]
