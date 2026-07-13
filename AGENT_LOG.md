@@ -182,3 +182,22 @@
 - **学到的教训**：
   - TDD 在安全相关代码上特别有价值：`test_wrong_password_fails` 暴露了状态管理 bug
   - `unlock()` 的状态清除是安全关键：不清除就可能导致锁定后仍可访问
+
+---
+
+## 2026-07-13 09:40 — Task 5 实现：Guardrail
+
+- **时间戳**：2026-07-13 09:40
+- **阶段**：实现工作流（§4.6）
+- **触发的 Superpowers 技能**：`using-git-worktrees` → `test-driven-development` → `requesting-code-review` → `finishing-a-development-branch`
+- **Task 5 执行过程**：
+  1. **git worktree 创建**：`.worktrees/task-5-guardrail` → `feature/task-5-guardrail`
+  2. **TDD RED**：编写 `tests/test_guardrail.py`（12 个测试），确认失败
+  3. **TDD GREEN**：实现 `the_harness/guardrail/guardrail.py`（14 个危险正则 + 4 个系统路径 + 工作区边界），确认通过（32 passed）
+  4. **提交**：`4d01088`
+  5. **两阶段评审**（code-reviewer subagent）：
+     - Stage 1 spec 合规：PASS（6/6 检查通过，14 个正则逐一核对）
+     - Stage 2 代码质量：PASS（6/6 检查通过）
+     - 无关键问题，5 个非阻塞建议（git clean 变体、系统路径子串匹配等）
+  6. **finishing-a-development-branch**：`git merge --no-ff` 合并回 main（`91fcf98`）
+- **commit hash**：`4d01088`（feature 分支）→ `91fcf98`（main merge）

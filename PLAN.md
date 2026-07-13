@@ -156,7 +156,11 @@ Task 1 (Scaffolding)
 
 ---
 
-## Task 5: Guardrail
+## Task 5: Guardrail ✅
+
+**Completed:** 2026-07-13
+**Commit:** `4d01088` (merge: `91fcf98`)
+**Notes:** TDD RED→GREEN, two-stage code review passed (spec compliance PASS, code quality PASS). No critical issues.
 
 **Goal:** Implement dangerous action interception with regex patterns and workspace path checking.
 
