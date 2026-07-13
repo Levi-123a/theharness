@@ -233,3 +233,13 @@ async def index() -> HTMLResponse:
 
 # Mount static files
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+
+
+def main() -> None:
+    """Entry point for the-harness CLI command.
+
+    Runs the FastAPI app via uvicorn on 0.0.0.0:8000.
+    """
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)

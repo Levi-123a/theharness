@@ -405,3 +405,27 @@
 - **学到的教训**：
   - CI 的 job 名称必须与规范要求完全一致（`unit-test`）
   - Dockerfile 应该先 copy `pyproject.toml` 再 copy 源码，利用 Docker layer cache 加速构建
+
+---
+
+## 2026-07-13 13:30 — 最终代码评审修复 + REFLECTION.md
+
+- **时间戳**：2026-07-13 13:30
+- **阶段**：收尾工作
+- **触发的 Superpowers 技能**：`requesting-code-review`（最终评审）、`verification-before-completion`
+- **执行过程**：
+  1. **最终代码评审**：code-reviewer subagent 对整个项目做最终评审，发现 5 个 Important issues + 5 个 Suggestions
+  2. **修复 5 个 Important issues**：
+     - `save_session` 字段名不匹配：`type`→`action_type`、`params`→`action_params`（与 `store.py` 的 `save_session` 方法一致）
+     - `save_session` 调用路径不完整：仅在 max-rounds 退出时调用 → 提取 `_save_session` 辅助方法，在所有 4 个退出路径（give_up、pass、repeated、max_rounds）均调用
+     - `pyproject.toml` 入口点指向 ASGI 对象：`the_harness.webui.app:app` → 添加 `main()` 可调用函数，改为 `the_harness.webui.app:main`
+     - 缺少真实 LLM Provider：创建 `the_harness/llm/openai_provider.py`（`OpenAILLMProvider`，调用 OpenAI Chat Completions API，解析 JSON 响应）
+     - ToolDispatcher 缺少工作区边界第二层检查：在 `_resolve_path` 中添加 `PermissionError` 检查，确保解析后的路径不逃逸出工作区
+  3. **验证**：82 tests passed，无回归
+  4. **创建 REFLECTION.md**：1500-2500 字反思报告，回答 9 个问题
+- **commit hash**：待提交
+- **学到的教训**：
+  - `save_session` 的字段名必须与 `store.py` 的 `save_session` 方法中的 `action.get("action_type", "")` 和 `json.dumps(action.get("action_params", {}))` 完全一致——字段名不匹配不会报错，但数据会静默丢失
+  - 所有退出路径（不只是 max-rounds）都应保存会话——否则成功会话和 give-up 会话的历史会丢失
+  - `pyproject.toml` 的 `project.scripts` 入口点必须指向可调用对象（函数），而非 ASGI 应用对象——`uvicorn app:app` 和 `the-harness` CLI 命令是不同的使用场景
+  - 真实 LLM Provider 的系统提示词需要明确指示 LLM 返回 JSON 格式的 action/params/reasoning，并处理 markdown 代码围栏

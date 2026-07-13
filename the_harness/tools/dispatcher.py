@@ -47,19 +47,26 @@ class ToolDispatcher:
         return handler(action)
 
     def _resolve_path(self, file_path: str) -> Path:
-        """Resolve a file path relative to the workspace."""
+        """Resolve a file path relative to the workspace.
+
+        Raises PermissionError if the resolved path escapes the workspace.
+        """
         p = Path(file_path)
         if not p.is_absolute():
             p = self._workspace / p
-        return p.resolve()
+        resolved = p.resolve()
+        # Security: second-layer check — ensure path stays within workspace
+        if not str(resolved).startswith(str(self._workspace)):
+            raise PermissionError(f"Path escapes workspace boundary: {file_path}")
+        return resolved
 
     def _read_file(self, action: Action) -> ActionResult:
         """Read file content."""
         file_path = action.params.get("file_path", "")
-        resolved = self._resolve_path(file_path)
-        if not resolved.exists():
-            return ActionResult(success=False, error=f"File not found: {file_path}")
         try:
+            resolved = self._resolve_path(file_path)
+            if not resolved.exists():
+                return ActionResult(success=False, error=f"File not found: {file_path}")
             content = resolved.read_text(encoding="utf-8")
             return ActionResult(success=True, output=content)
         except Exception as e:
@@ -69,8 +76,8 @@ class ToolDispatcher:
         """Create or overwrite a file, creating parent dirs."""
         file_path = action.params.get("file_path", "")
         content = action.params.get("content", "")
-        resolved = self._resolve_path(file_path)
         try:
+            resolved = self._resolve_path(file_path)
             resolved.parent.mkdir(parents=True, exist_ok=True)
             resolved.write_text(content, encoding="utf-8")
             return ActionResult(success=True, output=f"Wrote {file_path}")
@@ -82,10 +89,10 @@ class ToolDispatcher:
         file_path = action.params.get("file_path", "")
         old_text = action.params.get("old_text", "")
         new_text = action.params.get("new_text", "")
-        resolved = self._resolve_path(file_path)
-        if not resolved.exists():
-            return ActionResult(success=False, error=f"File not found: {file_path}")
         try:
+            resolved = self._resolve_path(file_path)
+            if not resolved.exists():
+                return ActionResult(success=False, error=f"File not found: {file_path}")
             content = resolved.read_text(encoding="utf-8")
             if old_text not in content:
                 return ActionResult(success=False, error=f"Text not found: {old_text[:50]}")

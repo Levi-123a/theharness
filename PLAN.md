@@ -476,6 +476,13 @@ Task 1 (Scaffolding)
 **Commit:** `47f11ce` (merge: `HEAD`)
 **Notes:** Created Dockerfile (python:3.12-slim, pip install -e ., expose 8000, CMD uvicorn), GitHub Actions CI (unit-test + docker-build jobs), Makefile (test/run/docker-build/demo/install targets). Updated README with distribution commands table. Uncommented pyproject.toml entry point.
 
+**Post-Review Fixes (2026-07-13):** Fixed 5 issues found by final code review:
+1. `save_session` field name mismatch (`type`→`action_type`, `params`→`action_params`) — data loss bug
+2. `save_session` only called on max-rounds exit — added to all 4 exit paths (give_up, pass, repeated, max_rounds)
+3. `pyproject.toml` entry point pointed to ASGI object — added `main()` callable function
+4. Missing real LLM Provider — created `OpenAILLMProvider` in `the_harness/llm/openai_provider.py`
+5. ToolDispatcher missing workspace boundary second-layer check — added `PermissionError` in `_resolve_path`
+
 **Goal:** Create Dockerfile, GitHub Actions CI config, and deployment setup.
 
 **Depends on:** All previous tasks

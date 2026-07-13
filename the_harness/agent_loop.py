@@ -88,6 +88,7 @@ class AgentLoop:
 
             # c. Check give_up
             if action.type == ActionType.GIVE_UP:
+                self._save_session(task, False, round_num, "LLM gave up", action_history)
                 return Result(
                     success=False,
                     rounds=round_num,
@@ -120,6 +121,7 @@ class AgentLoop:
 
             # i. Check pass
             if feedback.type == FeedbackType.PASS:
+                self._save_session(task, True, round_num, "All tests passed", action_history)
                 return Result(
                     success=True,
                     rounds=round_num,
@@ -129,6 +131,7 @@ class AgentLoop:
 
             # j. Check repeated action
             if self._is_repeated(action_history):
+                self._save_session(task, False, round_num, "Stuck in loop: repeated action", action_history)
                 return Result(
                     success=False,
                     rounds=round_num,
@@ -144,22 +147,46 @@ class AgentLoop:
             self._memory.save_failure_pattern(feedback.type.value, feedback.strategy_hint)
 
         # 3. Max rounds exceeded
-        self._memory.save_session({
-            "test_path": task.test_path,
-            "success": False,
-            "rounds": self._config.max_rounds,
-            "reason": "Max rounds exceeded",
-            "actions": [
-                {"round": i + 1, "type": a.type.value, "params": a.params, "reasoning": a.reasoning}
-                for i, a in enumerate(action_history)
-            ],
-        })
+        self._save_session(task, False, self._config.max_rounds, "Max rounds exceeded", action_history)
         return Result(
             success=False,
             rounds=self._config.max_rounds,
             reason="Max rounds exceeded",
             action_history=action_history,
         )
+
+    def _save_session(
+        self,
+        task: Task,
+        success: bool,
+        rounds: int,
+        reason: str,
+        action_history: list[Action],
+    ) -> None:
+        """Save session data to the memory store on all exit paths.
+
+        Args:
+            task: The task that was worked on.
+            success: Whether the task succeeded.
+            rounds: Number of rounds executed.
+            reason: Exit reason.
+            action_history: List of actions taken.
+        """
+        self._memory.save_session({
+            "test_path": task.test_path,
+            "success": success,
+            "rounds": rounds,
+            "reason": reason,
+            "actions": [
+                {
+                    "round": i + 1,
+                    "action_type": a.type.value,
+                    "action_params": a.params,
+                    "reasoning": a.reasoning,
+                }
+                for i, a in enumerate(action_history)
+            ],
+        })
 
     def _parse_action(self, response: dict[str, Any], context_parts: list[str]) -> Action | None:
         """Parse LLM response into an Action object.
