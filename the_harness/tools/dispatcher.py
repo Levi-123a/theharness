@@ -40,6 +40,7 @@ class ToolDispatcher:
             ActionType.RUN_SHELL: self._run_shell,
             ActionType.RUN_TESTS: self._run_shell,
             ActionType.GIVE_UP: self._give_up,
+            ActionType.DONE: self._done,
         }
         handler = dispatch.get(action.type)
         if handler is None:
@@ -132,3 +133,7 @@ class ToolDispatcher:
     def _give_up(self, action: Action) -> ActionResult:
         """Return a give-up result."""
         return ActionResult(success=True, output="Agent gave up")
+
+    def _done(self, action: Action) -> ActionResult:
+        """Return a done result."""
+        return ActionResult(success=True, output="Task completed")

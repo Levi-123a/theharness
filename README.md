@@ -5,11 +5,12 @@ A self-implemented Coding Agent Harness focused on the **feedback loop** mechani
 ## Features
 
 - **Agent Main Loop**: Self-implemented orchestration (context → LLM → action → feedback → stop)
+- **Freeform Mode**: User describes a task in natural language, agent autonomously reads/edits/writes code and runs commands to complete it
 - **Feedback Loop (Core Contribution)**: Deterministic test validator → failure classifier (5 types) → feedback injector
 - **Guardrails**: 5 categories of dangerous action interception with HITL approval
 - **Memory**: Project context, session history, failure pattern accumulation
-- **Credential Management**: AES-256 encrypted storage with master password
-- **WebUI**: Terminal-style streaming output with session history sidebar
+- **Credential Management**: AES-256 encrypted storage with master password — configurable via WebUI or CLI
+- **WebUI**: Terminal-style streaming output with session history sidebar, mode switching (Fix Test / Freeform), and built-in API key settings
 - **Mock LLM**: Deterministic unit testing without network or real LLM
 
 ## Installation
@@ -74,9 +75,9 @@ This will:
 ### WebUI
 
 1. Open `http://localhost:8000` in your browser
-2. Enter the path to your failing test
-3. Click "Start Fix"
-4. Watch the agent work in real-time
+2. **Configure API Key** (first time): Click "Settings" → Create credential store with a master password → Unlock → Store your OpenAI API key
+3. **Fix Test mode**: Enter the path to your failing test and workspace → Click "Start Fix" → Watch the agent work in real-time
+4. **Freeform mode**: Switch to "Freeform" tab → Enter a text description (e.g. "Add a hello() function to main.py") → Enter workspace → Click "Send" → Agent autonomously reads, edits, writes code and runs commands to complete your request
 
 ### CLI
 
@@ -202,8 +203,8 @@ CI runs on every push to `main` and every pull request. The `unit-test` job must
 
 - **Platform**: Linux x86_64 (Docker); Python 3.12+ required for source install
 - **Test framework**: Currently supports pytest only
-- **LLM provider**: OpenAI by default; mock provider for testing
-- **Concurrency**: Single fix task at a time
+- **LLM provider**: OpenAI by default; mock provider for testing; freeform mode uses configurable system prompt
+- **Concurrency**: Single task at a time (fix or freeform)
 
 ## License
 

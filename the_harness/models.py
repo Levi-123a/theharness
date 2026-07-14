@@ -21,6 +21,7 @@ class ActionType(str, Enum):
     RUN_SHELL = "run_shell"
     RUN_TESTS = "run_tests"
     GIVE_UP = "give_up"
+    DONE = "done"
 
 
 class FeedbackType(str, Enum):
@@ -44,10 +45,12 @@ class Task:
     Attributes:
         test_path: Path to the test file to make pass.
         workspace: Path to the workspace directory.
+        description: Free-form instruction for the freeform mode.
     """
 
     test_path: str
     workspace: str
+    description: str = ""
 
 
 @dataclass

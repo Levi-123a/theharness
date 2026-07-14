@@ -30,7 +30,10 @@ class TestCmdSetup:
 
     def test_setup_creates_store(self, tmp_creds_path):
         """cmd_setup should create an encrypted credential store."""
-        with patch("getpass.getpass", side_effect=["password123", "password123", "sk-test-key"]):
+        # getpass: set password, confirm password, enter API key
+        # input: base_url, model
+        with patch("getpass.getpass", side_effect=["password123", "password123", "sk-test-key"]), \
+             patch("builtins.input", side_effect=["", ""]):
             result = cmd_setup()
         assert result == 0
         assert Path(tmp_creds_path).exists()
@@ -65,6 +68,13 @@ class TestCmdSetup:
             result = cmd_setup()
         assert result == 1
 
+    def test_setup_with_base_url_and_model(self, tmp_creds_path):
+        """cmd_setup should store base_url and model when provided."""
+        with patch("getpass.getpass", side_effect=["password123", "password123", "sk-key"]), \
+             patch("builtins.input", side_effect=["https://api.deepseek.com/v1", "deepseek-chat"]):
+            result = cmd_setup()
+        assert result == 0
+
 
 class TestCmdStatus:
     """Test status command (shows providers without revealing keys)."""
@@ -84,7 +94,8 @@ class TestCmdStatus:
 
     def test_status_shows_provider(self, tmp_creds_path):
         """cmd_status should show configured provider without revealing key."""
-        with patch("getpass.getpass", side_effect=["password123", "password123", "sk-test"]):
+        with patch("getpass.getpass", side_effect=["password123", "password123", "sk-test"]), \
+             patch("builtins.input", side_effect=["", ""]):
             cmd_setup()
         with patch("getpass.getpass", side_effect=["password123"]):
             result = cmd_status()
@@ -98,8 +109,18 @@ class TestCmdStore:
         """cmd_store should store a new API key."""
         with patch("getpass.getpass", side_effect=["password123", "password123", ""]):
             cmd_setup()
+        # getpass: unlock password, API key; input: provider, base_url, model
         with patch("getpass.getpass", side_effect=["password123", "sk-new-key"]), \
-             patch("builtins.input", side_effect=["openai"]):
+             patch("builtins.input", side_effect=["openai", "", ""]):
+            result = cmd_store()
+        assert result == 0
+
+    def test_store_key_with_base_url_and_model(self, tmp_creds_path):
+        """cmd_store should store base_url and model."""
+        with patch("getpass.getpass", side_effect=["password123", "password123", ""]):
+            cmd_setup()
+        with patch("getpass.getpass", side_effect=["password123", "sk-ds-key"]), \
+             patch("builtins.input", side_effect=["deepseek", "https://api.deepseek.com/v1", "deepseek-chat"]):
             result = cmd_store()
         assert result == 0
 
@@ -114,7 +135,8 @@ class TestCmdDelete:
 
     def test_delete_key(self, tmp_creds_path):
         """cmd_delete should remove a provider's key."""
-        with patch("getpass.getpass", side_effect=["password123", "password123", "sk-test"]):
+        with patch("getpass.getpass", side_effect=["password123", "password123", "sk-test"]), \
+             patch("builtins.input", side_effect=["", ""]):
             cmd_setup()
         with patch("getpass.getpass", side_effect=["password123"]), \
              patch("builtins.input", side_effect=["openai"]):

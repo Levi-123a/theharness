@@ -67,8 +67,14 @@ def cmd_setup() -> int:
     # Optionally store an API key now
     key = getpass.getpass("Enter OpenAI API key (leave blank to skip): ")
     if key.strip():
-        mgr.store("openai", key.strip())
+        base_url = input("Base URL (leave empty for default): ").strip()
+        model = input("Model name (leave empty for default): ").strip()
+        mgr.store("openai", key.strip(), base_url, model)
         print("API key stored securely (encrypted with AES-256-GCM).")
+        if base_url:
+            print(f"  Base URL: {base_url}")
+        if model:
+            print(f"  Model: {model}")
     else:
         print("Skipped. You can add a key later with 'store'.")
 
@@ -114,8 +120,10 @@ def cmd_status() -> int:
         print("No API keys stored.")
     else:
         print("Configured providers:")
-        for provider, configured in status.items():
-            print(f"  {provider}: {'configured' if configured else 'not set'}")
+        for provider, info in status.items():
+            url_str = f" | URL: {info['base_url']}" if info.get("base_url") else ""
+            model_str = f" | Model: {info['model']}" if info.get("model") else ""
+            print(f"  {provider}: configured{url_str}{model_str}")
     mgr.lock()
     return 0
 
@@ -145,8 +153,15 @@ def cmd_store() -> int:
         mgr.lock()
         return 1
 
-    mgr.store(provider, key.strip())
+    base_url = input("Base URL (leave empty for default): ").strip()
+    model = input("Model name (leave empty for default): ").strip()
+
+    mgr.store(provider, key.strip(), base_url, model)
     print(f"API key for '{provider}' stored securely.")
+    if base_url:
+        print(f"  Base URL: {base_url}")
+    if model:
+        print(f"  Model: {model}")
     mgr.lock()
     return 0
 

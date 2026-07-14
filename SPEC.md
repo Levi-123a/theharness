@@ -40,8 +40,10 @@
 
 ### 3.1 Agent 主循环（AgentLoop）
 
-- **输入**：`Task`（包含 failing test 路径、工作目录路径）、`Config`（最大轮次、LLM 供应商配置等）
-- **行为**：组织上下文 → 调用 LLM → 解析动作 → 护栏检查 → 分发执行 → 校验器运行测试 → 分类器分类失败 → 回灌反馈 → 停机判断 → 循环或终止
+- **输入**：`Task`（包含 failing test 路径、工作目录路径、可选的自由指令描述）、`Config`（最大轮次、LLM 供应商配置等）
+- **行为**：
+  - **Fix Test 模式** `run(task)`：组织上下文 → 调用 LLM → 解析动作 → 护栏检查 → 分发执行 → 校验器运行测试 → 分类器分类失败 → 回灌反馈 → 停机判断 → 循环或终止
+  - **Freeform 模式** `run_freeform(task)`：组织上下文（含用户文字描述）→ 调用 LLM → 解析动作 → 护栏检查 → 分发执行 → 将执行结果回灌给 LLM → 检查 done/give_up → 循环或终止。不运行测试校验器和分类器，LLM 自主决定何时完成
 - **输出**：`Result`（success: bool, rounds: int, reason: str, action_history: list）
 - **边界条件**：最大轮次默认 5，可配置；工作目录外操作被拒绝
 - **错误处理**：LLM 调用失败时重试 1 次，仍失败则停机；动作解析失败时回灌"请返回规范 JSON"
@@ -50,7 +52,7 @@
 
 - **输入**：`context`（系统提示 + 对话历史 + 结构化反馈）
 - **输出**：结构化 JSON `{"action": "...", "params": {...}, "reasoning": "..."}`
-- **行为**：`OpenAIProvider` 调用 OpenAI Chat Completions API；`MockLLMProvider` 返回预设的动作序列
+- **行为**：`OpenAIProvider` 调用 OpenAI Chat Completions API，支持自定义 `system_prompt`（Fix Test 模式使用测试修复提示词，Freeform 模式使用自由指令提示词，包含 `done` action）；`MockLLMProvider` 返回预设的动作序列
 - **边界条件**：上下文超限时截断最早的历史消息
 - **错误处理**：API 超时/限流时重试 1 次；返回非 JSON 时回灌格式要求
 
@@ -70,6 +72,7 @@
 | `run_shell` | 命令字符串 | 在工作目录执行 | stdout/stderr/exit_code |
 | `run_tests` | 测试路径 | 调用 TestValidator | TestResult |
 | `give_up` | 原因 | 触发停机 | - |
+| `done` | - | 标记任务完成（Freeform 模式） | - |
 
 ### 3.4 护栏（Guardrail）
 
@@ -141,11 +144,36 @@
 
 ### 3.8 WebUI（FastAPI）
 
-- **输入**：HTTP 请求（新建修复任务、查询历史、WebSocket 连接）
-- **行为**：接收 test 路径 → 启动 agent → WebSocket 推送实时输出 → 存储会话历史
-- **输出**：流式 JSON 事件、历史会话列表
-- **边界条件**：同时只运行一个修复任务
-- **错误处理**：agent 异常时推送错误事件并记录
+- **输入**：HTTP 请求（新建修复任务、自由指令任务、凭据管理、查询历史、WebSocket 连接）
+- **行为**：
+  - Fix Test 模式：接收 test 路径 → 启动 agent → WebSocket 推送实时输出 → 存储会话历史
+  - Freeform 模式：接收用户文字描述 → 启动 freeform agent → WebSocket 推送实时输出（action/execution/result 事件）
+  - 凭据管理：通过 REST API 创建/解锁/存储/删除 API Key，无需 CLI
+  - 前端模式切换：Fix Test / Freeform 标签切换，Settings 模态框管理 API Key
+- **输出**：流式 JSON 事件（action/execution/feedback/result/error）、历史会话列表、凭据状态
+- **边界条件**：同时只运行一个任务（fix 或 freeform）
+- **错误处理**：agent 异常时推送错误事件并记录；凭据未解锁时拒绝存储/删除操作
+
+**REST API 端点：**
+
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/api/fix` | POST | 启动 Fix Test 任务 |
+| `/api/instruct` | POST | 启动 Freeform 任务 |
+| `/api/sessions` | GET | 列出历史会话 |
+| `/api/sessions/{id}` | GET | 获取会话详情 |
+| `/api/credentials/setup` | POST | 创建凭据库（设置主密码） |
+| `/api/credentials/unlock` | POST | 解锁凭据库 |
+| `/api/credentials/status` | GET | 查看凭据库状态 |
+| `/api/credentials/store` | POST | 存储/更新 API Key |
+| `/api/credentials/{provider}` | DELETE | 删除 API Key |
+
+**WebSocket 端点：**
+
+| 端点 | 描述 |
+|------|------|
+| `/ws/fix/{session_id}` | 流式传输 Fix Test 模式事件 |
+| `/ws/instruct/{session_id}` | 流式传输 Freeform 模式事件 |
 
 ---
 

@@ -49,3 +49,10 @@ docker-compose.override.yml
 
 # Worktrees
 .worktrees/
+
+# Server logs
+server_stdout.txt
+server_stderr.txt
+
+# Trae IDE
+.trae/

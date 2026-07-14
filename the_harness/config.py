@@ -13,6 +13,7 @@ class Config:
         model: Default model identifier to use with the provider.
         workspace: Path to the workspace directory the agent operates in.
         test_timeout: Timeout in seconds for running tests.
+        base_url: Optional base URL for the LLM API endpoint.
     """
 
     max_rounds: int = 5
@@ -20,3 +21,4 @@ class Config:
     model: str = "gpt-4o-mini"
     workspace: str = "."
     test_timeout: int = 30
+    base_url: str = ""

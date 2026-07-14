@@ -1,26 +1,86 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>the-harness — Coding Agent WebUI</title>
+    <title>the-harness — 编程助手</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
     <div id="app">
         <aside id="sidebar">
-            <h2>Sessions</h2>
+            <h2>会话列表</h2>
             <ul id="session-list"></ul>
         </aside>
         <main id="main">
+            <div id="header">
+                <div id="mode-tabs">
+                    <button class="tab active" data-mode="fix">修复测试</button>
+                    <button class="tab" data-mode="freeform">自由模式</button>
+                </div>
+                <button id="settings-btn" title="API 密钥设置">设置</button>
+            </div>
             <div id="terminal"></div>
-            <div id="input-bar">
-                <input type="text" id="test-path" placeholder="tests/test_foo.py">
-                <input type="text" id="workspace" placeholder="/path/to/workspace">
-                <button id="start-btn">Start Fix</button>
+
+            <!-- 修复测试模式 -->
+            <div id="input-bar-fix" class="input-bar">
+                <input type="text" id="test-path" placeholder="测试文件路径（如 tests/test_foo.py）">
+                <input type="text" id="workspace" placeholder="工作目录（留空为当前目录）">
+                <button id="start-btn">开始修复</button>
+            </div>
+
+            <!-- 自由模式 -->
+            <div id="input-bar-freeform" class="input-bar" style="display:none;">
+                <textarea id="instruction" placeholder="描述你想让助手做的事情（如"在 main.py 中添加 hello() 函数"）"></textarea>
+                <input type="text" id="workspace-freeform" placeholder="工作目录（留空为当前目录）">
+                <button id="instruct-btn">发送</button>
             </div>
         </main>
     </div>
+
+    <!-- 设置弹窗 -->
+    <div id="settings-modal" class="modal" style="display:none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>API 密钥设置</h3>
+                <button id="modal-close" class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="cred-status-area">
+                    <p id="cred-status-text">正在检查状态...</p>
+                </div>
+
+                <!-- 首次创建 -->
+                <div id="cred-setup-section" style="display:none;">
+                    <h4>创建凭据存储</h4>
+                    <p>设置主密码以加密您的 API 密钥。</p>
+                    <input type="password" id="setup-password" placeholder="主密码">
+                    <button id="setup-btn">创建</button>
+                </div>
+
+                <!-- 解锁 -->
+                <div id="cred-unlock-section" style="display:none;">
+                    <h4>解锁</h4>
+                    <p>输入主密码以解锁。</p>
+                    <input type="password" id="unlock-password" placeholder="主密码">
+                    <button id="unlock-btn">解锁</button>
+                </div>
+
+                <!-- 管理密钥 -->
+                <div id="cred-manage-section" style="display:none;">
+                    <h4>已存储的密钥</h4>
+                    <ul id="cred-provider-list"></ul>
+                    <h4>添加 / 更新密钥</h4>
+                    <input type="text" id="cred-provider-name" placeholder="服务商名称（如 openai、deepseek、ollama）">
+                    <input type="text" id="cred-key-input" placeholder="API 密钥（如 sk-...）">
+                    <input type="text" id="cred-base-url" placeholder="接口地址（如 https://api.deepseek.com/v1，留空使用默认值）">
+                    <input type="text" id="cred-model" placeholder="模型（如 gpt-4o-mini，留空使用默认值）">
+                    <button id="cred-store-btn">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/app.js"></script>
 </body>
 </html>

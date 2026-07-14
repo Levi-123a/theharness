@@ -155,6 +155,97 @@ class AgentLoop:
             action_history=action_history,
         )
 
+    def run_freeform(self, task: Task) -> Result:
+        """Run the agent in freeform mode — no test validation, LLM decides when done.
+
+        The agent reads, edits, writes files and runs shell commands based on
+        the user's text description in ``task.description``. The loop ends when
+        the LLM returns ``done`` or ``give_up``, or when max rounds are exceeded.
+
+        Args:
+            task: The task with a ``description`` field containing user instructions.
+
+        Returns:
+            Result with success status, rounds, reason, and action history.
+        """
+        context_parts: list[str] = [
+            f"User instruction: {task.description}",
+            f"Workspace: {task.workspace}",
+        ]
+        action_history: list[Action] = []
+
+        for round_num in range(1, self._config.max_rounds + 1):
+            # a. Call LLM
+            messages = [{"role": "system", "content": "\n\n".join(context_parts)}]
+            response = self._llm.complete(messages)
+
+            # b. Parse action
+            action = self._parse_action(response, context_parts)
+            if action is None:
+                continue
+
+            # c. Check done / give_up
+            if action.type == ActionType.DONE:
+                self._save_session(task, True, round_num, "Task completed", action_history)
+                return Result(
+                    success=True,
+                    rounds=round_num,
+                    reason="Task completed",
+                    action_history=action_history,
+                )
+            if action.type == ActionType.GIVE_UP:
+                self._save_session(task, False, round_num, "LLM gave up", action_history)
+                return Result(
+                    success=False,
+                    rounds=round_num,
+                    reason="LLM gave up",
+                    action_history=action_history,
+                )
+
+            # d. Guardrail check
+            gr = self._guardrail.check(action)
+
+            # e. HITL if blocked
+            if gr.blocked:
+                approved = self._hitl_callback(gr.reason)
+                if not approved:
+                    context_parts.append(f"Action rejected by guardrail: {gr.reason}")
+                    continue
+
+            # f. Execute action
+            exec_result = self._dispatcher.execute(action)
+            if not exec_result.success:
+                context_parts.append(
+                    f"Action execution failed: {exec_result.error}\nOutput: {exec_result.output}"
+                )
+                continue
+            action_history.append(action)
+
+            # g. Feed execution output back to LLM
+            output_preview = exec_result.output[:2000] if exec_result.output else "(no output)"
+            context_parts.append(
+                f"Result of {action.type.value}: {output_preview}"
+            )
+
+            # h. Check repeated action
+            if self._is_repeated(action_history):
+                self._save_session(task, False, round_num, "Stuck in loop: repeated action", action_history)
+                return Result(
+                    success=False,
+                    rounds=round_num,
+                    reason="Stuck in loop: repeated action",
+                    action_history=action_history,
+                )
+
+        # Max rounds exceeded
+        self._save_session(task, False, self._config.max_rounds, "Max rounds exceeded", action_history)
+        return Result(
+            success=False,
+            rounds=self._config.max_rounds,
+            reason="Max rounds exceeded",
+            action_history=action_history,
+        )
+
     def _save_session(
         self,
         task: Task,

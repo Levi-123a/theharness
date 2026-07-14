@@ -455,3 +455,163 @@
   - TASK.md §五.6 明确要求 `.gitlab-ci.yml`（非 `.github/workflows/ci.yml`）——NJU GitLab 使用 GitLab CI，需同时提供两种 CI 配置
   - §3.1 的"首次运行应能引导用户安全录入 key"要求的是交互式 CLI 流程，而非仅提供 API 方法——`CredentialManager` 有 `setup()`/`store()` 方法但缺少调用它们的 CLI 入口
   - §4.11 的"README 说明部署架构与 CI/CD"要求在 README 中描述系统架构图和 CI/CD 管道，而非仅在 SPEC 中描述
+
+---
+
+## 2026-07-14 17:30 — 项目状态全流程分析
+
+- **时间戳**：2026-07-14 17:30
+- **阶段**：收尾验证
+- **触发的 Superpowers 技能**：无（只读分析）
+- **关键 prompt / context 配置**：
+  - 用户输入："根据当前项目文档和具体代码分析当前项目状态"
+  - 读取 `HANDOFF.md`、`TASK.md`、`PLAN.md`、`SPEC.md`、`pyproject.toml`、全部源代码与测试文件、CI 配置、`AGENT_LOG.md`、`REFLECTION.md`
+  - 派出 2 个 search subagent 并行分析：核心模块代码质量 + 测试覆盖率与基础设施
+- **分析结果**：
+  - 14/14 Task 全部完成，99 tests passed，HEAD `ac1d794`
+  - Superpowers 七步工作流基本合规，偏离（subagent 无文件写入能力）已记录
+  - 两个关键缺口：线上部署 URL 未确认、GitLab CI 执行记录缺失
+  - Freeform 模式端点已完整实现（`/api/instruct`、`/ws/instruct/{session_id}`）
+- **学到的教训**：
+  - 全流程合规检查应对照 TASK.md §五的 11 项交付物逐条核对，而非仅检查代码完成度
+  - 线上部署和 CI 运行记录是硬性评分项，容易在开发末期被忽略
+
+---
+
+## 2026-07-14 18:00 — WebUI 启动与端口冲突处理
+
+- **时间戳**：2026-07-14 18:00
+- **阶段**：部署运行
+- **触发的 Superpowers 技能**：无
+- **关键 prompt / context 配置**：
+  - 用户输入："启动当前项目"
+  - 首次启动时端口 8000 被旧 Python 进程（PID 47636）占用，返回 `WinError 10048`
+- **人工干预**：用户选择"终止旧进程并重启"
+- **执行过程**：
+  1. `taskkill /PID 47636 /F` 终止旧进程
+  2. `uvicorn the_harness.webui.app:app --host 0.0.0.0 --port 8000` 重新启动
+  3. 通过 `OpenPreview` 打开 `http://localhost:8000`
+- **学到的教训**：
+  - Windows 环境下 uvicorn 端口占用错误码是 `WinError 10048`，应先 `netstat -ano | findstr :8000` 查找占用进程
+
+---
+
+## 2026-07-15 00:20 — 扩展 LLM API 配置：支持自定义 Base URL 和 Model
+
+- **时间戳**：2026-07-15 00:20
+- **阶段**：功能扩展
+- **触发的 Superpowers 技能**：`brainstorming`（Plan 模式探索）、TDD
+- **关键 prompt / context 配置**：
+  - 用户输入："修改当前项目的api系统，让用户可以通过输入api和url地址来使用llm"
+  - Plan 模式：读取 `openai_provider.py`、`base.py`、`manager.py`、`app.py`、`app.js`、`index.html`、`config.py`、`cli.py`、`test_webui.py`、`test_credential_manager.py` 共 11 个文件
+  - 计划文件：`.trae/documents/llm-api-url-config.md`
+- **关键决策**：
+  1. `CredentialManager._data` 从 `dict[str, str]` 扩展为 `dict[str, dict[str, str]]`，每个 provider 存 `{"api_key", "base_url", "model"}`
+  2. 旧格式（str）在 `unlock()` 时自动迁移为 dict 格式，无缝升级
+  3. `OpenAILLMProvider` 新增 `base_url` 参数，传给 `OpenAI(base_url=...)` 构造函数
+  4. WebUI Settings 移除固定 `<select>`，改为自由输入 provider 名称 + Base URL + Model 三个字段
+  5. 不改 `LLMProvider` ABC——`base_url` 是 OpenAI 实现细节
+- **执行过程**：
+  1. **CredentialManager**：`store()` 签名改为 `store(provider, api_key, base_url="", model="")`；新增 `get_api_key()` 便捷方法；`status()` 返回 `dict[str, dict]`；`unlock()` 添加旧格式自动迁移逻辑
+  2. **OpenAILLMProvider**：`__init__` 新增 `base_url: str | None = None`；`OpenAI(api_key=..., base_url=self._base_url)`
+  3. **Config**：新增 `base_url: str = ""` 字段
+  4. **WebUI 后端**：`credentials_store` Body 改为 `{"provider", "api_key", "base_url", "model"}`；`_default_agent_loop_factory` 从 `cm.get("openai")` 提取完整配置传给 `OpenAILLMProvider`
+  5. **WebUI 前端**：`index.html` 移除 `<select>`，新增 3 个文本输入框；`app.js` 更新 Store/Edit 逻辑；新增 `editProvider()` 函数支持点击 Edit 回填表单；`style.css` 调整列表布局
+  6. **CLI**：`cmd_setup`/`cmd_store` 新增 `base_url`/`model` 输入提示；`cmd_status` 显示 URL 和 Model
+  7. **测试**：新增 6 个测试（`test_store_with_base_url_and_model`、`test_get_api_key_convenience`、`test_status_shows_base_url_and_model`、`test_backward_compat_migration`、`test_setup_with_base_url_and_model`、`test_store_key_with_base_url_and_model`），更新现有测试适配新接口
+- **验证**：105 passed, 0 failed（99 原有 + 6 新增）
+- **学到的教训**：
+  - 破坏性数据格式变更必须考虑向后兼容——旧用户解密文件时自动迁移比强制重新创建更友好
+  - `openai` 库的 `base_url=None` 等价于使用官方地址，空字符串需映射为 None
+
+---
+
+## 2026-07-15 00:50 — 修复 WebUI 创建 Key 后报错（PermissionError + React #185）
+
+- **时间戳**：2026-07-15 00:50
+- **阶段**：Bug 修复
+- **触发的 Superpowers 技能**：`test-driven-development`（RED → GREEN → REFACTOR）
+- **关键 prompt / context 配置**：
+  - 用户输入："为什么创建key后显示Error Minified React error #185..."
+  - 用户显式要求使用 `test-driven-development` 技能
+- **根因分析**：
+  - 表面现象：TRAE IDE 预览层显示 React error #185（"Objects are not valid as a React child"）
+  - 实际根因：`POST /api/credentials/setup` 在写入 `C:\Users\liwer\.the-harness\credentials.enc` 时抛出 `PermissionError: [Errno 13] Permission denied`——旧凭据文件被前一个 uvicorn 进程锁住
+  - FastAPI 未捕获 `PermissionError`，返回 500 Internal Server Error；TRAE 预览层渲染错误对象时触发 React #185
+- **TDD 流程**：
+  1. **RED**：写 `test_credentials_setup_returns_error_on_permission_denied`，patch `CredentialManager.setup` 抛出 `PermissionError`，断言响应应含可读错误而非 500。测试正确失败（异常未捕获，TestClient 抛出 `PermissionError`）
+  2. **GREEN**：在 `credentials_setup`、`credentials_store`、`credentials_delete` 三个端点添加 `try/except PermissionError`，返回 403 + 可读错误信息。测试通过
+  3. **全量回归**：106 passed, 0 failed
+- **执行过程**：
+  1. 修复代码后终止旧 uvicorn 进程（PID 46364）
+  2. 重新启动服务在 `localhost:8000`
+  3. 通过 `OpenPreview` 验证无浏览器错误
+- **学到的教训**：
+  - 表面是前端 React 错误，根因可能是后端未捕获异常——先看服务器日志再调前端
+  - FastAPI 端点应对所有可能的 IO 异常（`PermissionError`、`OSError`）做防御性捕获，避免 500 错误暴露给前端
+  - Windows 文件锁问题在进程被强制终止后仍可能残留，重启服务前应清理旧的凭据文件
+
+---
+
+## 2026-07-15 01:10 — 修复 WebUI "Failed to fetch"（CORS 跨域）
+
+- **时间戳**：2026-07-15 01:10
+- **阶段**：Bug 修复
+- **触发的 Superpowers 技能**：`test-driven-development`（RED → GREEN）
+- **关键 prompt / context 配置**：
+  - 用户输入："现在创建时会显示Setup failed: Failed to fetch，修改好 Use Skill: test-driven-development"
+- **根因分析**：
+  - 表面现象：浏览器前端发起 `POST /api/credentials/setup` 时显示 "Failed to fetch"
+  - 实际根因：FastAPI 未配置 CORS 中间件，浏览器因同源策略拦截了跨域请求（TRAE 预览层域名与 `localhost:8000` 不同源）
+- **TDD 流程**：
+  1. **RED**：写 `test_api_has_cors_headers`，发送 OPTIONS 预检请求，断言响应含 `access-control-allow-origin` 头。测试失败（无 CORS 头）
+  2. **GREEN**：在 `app.py` 添加 `CORSMiddleware`（`allow_origins=["*"]`, `allow_methods=["*"]`, `allow_headers=["*"]`）。测试通过
+  3. **全量回归**：107 passed, 0 failed
+- **学到的教训**：
+  - "Failed to fetch" 在浏览器中通常不是网络错误，而是 CORS 预检失败——应先检查 OPTIONS 响应头
+  - FastAPI 的 `CORSMiddleware` 必须在路由定义前添加，否则中间件不生效
+
+---
+
+## 2026-07-15 01:40 — 修复凭据文件路径依赖 CWD 导致 PermissionError
+
+- **时间戳**：2026-07-15 01:40
+- **阶段**：Bug 修复
+- **触发的 Superpowers 技能**：`test-driven-development`（RED → GREEN → 全量回归）
+- **关键 prompt / context 配置**：
+  - 用户输入："现在创建时会显示Cannot write credential file: [Errno 13] Permission denied: 'C:\\Users\\liwer\\.the-harness\\credentials.enc'. Check file permissions or delete the existing file.，修改好 Use Skill: test-driven-development"
+- **根因分析**：
+  - 表面现象：WebUI 创建凭据存储时返回 403 "Cannot write credential file: [Errno 13] Permission denied"
+  - 实际根因：`_CREDENTIAL_FILE` 使用 `Path.cwd()` 解析默认路径。当 uvicorn 进程从非项目目录启动时（如从用户主目录启动），`Path.cwd()` 返回 `C:\Users\liwer`，凭据文件路径变为 `C:\Users\liwer\.the-harness\credentials.enc`——该路径在 TRAE IDE 沙箱环境中不可写
+  - 诊断过程：直接 Python 调用 `setup()` 成功；TestClient 调用成功；但通过 HTTP 调用 uvicorn 服务返回 403。最终发现服务器进程的 CWD 与项目目录不同
+- **TDD 流程**：
+  1. **RED**：写 `test_credential_file_default_path_uses_module_location`，`monkeypatch.chdir(tmp_path)` 模拟从其他目录启动，重新导入模块，断言 `_CREDENTIAL_FILE` 不在 `tmp_path` 下而在项目根目录下。测试失败（路径为 `tmp_path\.the-harness\credentials.enc`，依赖 CWD）
+  2. **GREEN**：将 `_CREDENTIAL_FILE` 从 `Path.cwd() / ".the-harness" / "credentials.enc"` 改为 `_PROJECT_ROOT / ".the-harness" / "credentials.enc"`，其中 `_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent`（模块位置推导项目根目录）。测试通过
+  3. **全量回归**：109 passed, 0 failed
+- **验证**：
+  - 终止旧 uvicorn 进程（PID 45808），清除 `__pycache__`
+  - 重新启动服务，`POST /api/credentials/setup` 返回 200 OK
+  - 确认文件创建在 `D:\001\the harness\.the-harness\credentials.enc`（项目根目录），而非 `C:\Users\liwer\.the-harness\`
+- **学到的教训**：
+  - `Path.cwd()` 在服务器应用中是反模式——服务器进程的 CWD 取决于启动方式（服务管理器、IDE、命令行），不应作为定位项目资源的依据
+  - 正确做法是使用 `Path(__file__)` 从模块位置推导项目根目录，确保路径在任何启动方式下都一致
+  - TDD 的 RED 阶段通过 `monkeypatch.chdir()` 模拟不同 CWD 是验证路径解析逻辑的有效手段
+  - 沙箱环境的文件权限限制可能仅影响特定路径（如用户主目录），项目目录通常可写
+
+---
+
+## 2026-07-15 02:00 — WebUI 前端中文化
+
+- **时间戳**：2026-07-15 02:00
+- **阶段**：UI 优化
+- **触发的 Superpowers 技能**：`frontend-skill`
+- **关键 prompt / context 配置**：
+  - 用户输入："优化前端界面为中文，注意简单易用性"
+- **执行过程**：
+  1. **index.html**：`lang="en"` → `lang="zh-CN"`；所有界面文本翻译为中文（"Sessions"→"会话列表"、"Fix Test"→"修复测试"、"Freeform"→"自由模式"、"Settings"→"设置"、"Start Fix"→"开始修复"、"Send"→"发送"、"API Key Settings"→"API 密钥设置"等）；placeholder 添加中文示例说明
+  2. **app.js**：所有用户可见字符串翻译为中文（终端输出标签 `[Action]`→`[操作]`、`[Exec]`→`[执行]`、`[Feedback]`→`[反馈]`、`[Result]`→`[结果]`；alert 提示信息；状态文本；badge 文本 `PASS/FAIL`→`通过/失败`）；代码注释翻译为中文
+  3. **style.css**：`font-family` 添加中文字体支持（`'Microsoft YaHei', 'PingFang SC'`），保留等宽英文字体优先级
+- **验证**：9 WebUI tests passed，无回归；通过 `OpenPreview` 在浏览器中验证中文显示正常
+- **学到的教训**：
+  - 中文字体应放在等宽英文字体之后，让英文优先使用等宽字体保持终端风格，中文回退到系统中文字体
+  - `lang` 属性从 `en` 改为 `zh-CN` 有助于浏览器正确渲染和辅助技术识别

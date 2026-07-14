@@ -27,6 +27,7 @@ class CredentialManager:
         _unlocked: Whether the manager is currently unlocked.
         _key: The derived encryption key (only set when unlocked).
         _data: Decrypted credential store (only set when unlocked).
+            Format: {"provider_name": {"api_key": "...", "base_url": "...", "model": "..."}}
     """
 
     def __init__(self, file_path: str) -> None:
@@ -38,7 +39,7 @@ class CredentialManager:
         self._file_path = file_path
         self._unlocked = False
         self._key: bytes | None = None
-        self._data: dict[str, str] = {}
+        self._data: dict[str, dict[str, str]] = {}
 
     def setup(self, master_password: str) -> None:
         """Create a new encrypted credential store.
@@ -85,7 +86,12 @@ class CredentialManager:
         except Exception:
             return False
 
-        self._data = json.loads(plaintext.decode("utf-8"))
+        data = json.loads(plaintext.decode("utf-8"))
+        # Backward compatibility: migrate old str format to new dict format
+        for provider, value in data.items():
+            if isinstance(value, str):
+                data[provider] = {"api_key": value, "base_url": "", "model": ""}
+        self._data = data
         self._key = key
         self._unlocked = True
         return True
@@ -96,29 +102,31 @@ class CredentialManager:
         self._data = {}
         self._unlocked = False
 
-    def store(self, provider: str, key: str) -> None:
-        """Store or update an API key for a provider.
+    def store(self, provider: str, api_key: str, base_url: str = "", model: str = "") -> None:
+        """Store or update credentials for a provider.
 
         Args:
-            provider: The provider name (e.g. "openai").
-            key: The API key to store.
+            provider: The provider name (e.g. "openai", "deepseek").
+            api_key: The API key to store.
+            base_url: Optional base URL for the provider API endpoint.
+            model: Optional model name to use with this provider.
 
         Raises:
             RuntimeError: If the manager is not unlocked.
         """
         if not self._unlocked:
             raise RuntimeError("Credential manager is locked. Call unlock() first.")
-        self._data[provider] = key
+        self._data[provider] = {"api_key": api_key, "base_url": base_url, "model": model}
         self._persist()
 
-    def get(self, provider: str) -> str | None:
-        """Retrieve an API key for a provider.
+    def get(self, provider: str) -> dict[str, str] | None:
+        """Retrieve credentials for a provider.
 
         Args:
             provider: The provider name.
 
         Returns:
-            The API key, or None if not found.
+            A dict with "api_key", "base_url", "model" keys, or None if not found.
 
         Raises:
             RuntimeError: If the manager is not unlocked.
@@ -127,18 +135,43 @@ class CredentialManager:
             raise RuntimeError("Credential manager is locked. Call unlock() first.")
         return self._data.get(provider)
 
-    def status(self) -> dict[str, bool]:
-        """Return which providers have keys stored, without revealing the keys.
+    def get_api_key(self, provider: str) -> str | None:
+        """Retrieve only the API key for a provider.
+
+        Args:
+            provider: The provider name.
 
         Returns:
-            A dict mapping provider names to True (key exists).
+            The API key string, or None if not found.
 
         Raises:
             RuntimeError: If the manager is not unlocked.
         """
         if not self._unlocked:
             raise RuntimeError("Credential manager is locked. Call unlock() first.")
-        return {provider: True for provider in self._data}
+        entry = self._data.get(provider)
+        return entry.get("api_key") if entry else None
+
+    def status(self) -> dict[str, dict[str, str | bool]]:
+        """Return provider info without revealing API keys.
+
+        Returns:
+            A dict mapping provider names to their status info
+            (api_key: True, base_url: str, model: str).
+
+        Raises:
+            RuntimeError: If the manager is not unlocked.
+        """
+        if not self._unlocked:
+            raise RuntimeError("Credential manager is locked. Call unlock() first.")
+        return {
+            provider: {
+                "api_key": True,
+                "base_url": entry.get("base_url", ""),
+                "model": entry.get("model", ""),
+            }
+            for provider, entry in self._data.items()
+        }
 
     def delete(self, provider: str) -> None:
         """Delete a provider's key.
@@ -166,7 +199,7 @@ class CredentialManager:
         )
         return kdf.derive(password.encode("utf-8"))
 
-    def _write_file(self, salt: bytes, key: bytes, data: dict[str, str]) -> None:
+    def _write_file(self, salt: bytes, key: bytes, data: dict[str, dict[str, str]]) -> None:
         """Write encrypted credentials to file: salt + nonce + ciphertext."""
         nonce = os.urandom(_NONCE_SIZE)
         plaintext = json.dumps(data).encode("utf-8")
