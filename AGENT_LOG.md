@@ -408,7 +408,7 @@
 
 ---
 
-## 2026-07-13 13:30 — 最终代码评审修复 + REFLECTION.md
+## 2026-07-13 13:30 — 最终代码评审修复
 
 - **时间戳**：2026-07-13 13:30
 - **阶段**：收尾工作
@@ -422,8 +422,7 @@
      - 缺少真实 LLM Provider：创建 `the_harness/llm/openai_provider.py`（`OpenAILLMProvider`，调用 OpenAI Chat Completions API，解析 JSON 响应）
      - ToolDispatcher 缺少工作区边界第二层检查：在 `_resolve_path` 中添加 `PermissionError` 检查，确保解析后的路径不逃逸出工作区
   3. **验证**：82 tests passed，无回归
-  4. **创建 REFLECTION.md**：1500-2500 字反思报告，回答 9 个问题
-- **commit hash**：待提交
+- **commit hash**：`9778670`
 - **学到的教训**：
   - `save_session` 的字段名必须与 `store.py` 的 `save_session` 方法中的 `action.get("action_type", "")` 和 `json.dumps(action.get("action_params", {}))` 完全一致——字段名不匹配不会报错，但数据会静默丢失
   - 所有退出路径（不只是 max-rounds）都应保存会话——否则成功会话和 give-up 会话的历史会丢失
@@ -450,7 +449,7 @@
      - **更新 `README.md`**：添加部署架构图（本地/Docker/云部署）、CI/CD 管道说明表、凭据管理命令表、更新项目结构
      - **编写 `tests/test_cli.py`**：17 个测试覆盖所有 CLI 子命令
   3. **验证**：99 tests passed（82 原有 + 17 新增），无回归
-- **commit hash**：待提交
+- **commit hash**：`2df9b47`
 - **学到的教训**：
   - TASK.md §五.6 明确要求 `.gitlab-ci.yml`（非 `.github/workflows/ci.yml`）——NJU GitLab 使用 GitLab CI，需同时提供两种 CI 配置
   - §3.1 的"首次运行应能引导用户安全录入 key"要求的是交互式 CLI 流程，而非仅提供 API 方法——`CredentialManager` 有 `setup()`/`store()` 方法但缺少调用它们的 CLI 入口
@@ -465,7 +464,7 @@
 - **触发的 Superpowers 技能**：无（只读分析）
 - **关键 prompt / context 配置**：
   - 用户输入："根据当前项目文档和具体代码分析当前项目状态"
-  - 读取 `HANDOFF.md`、`TASK.md`、`PLAN.md`、`SPEC.md`、`pyproject.toml`、全部源代码与测试文件、CI 配置、`AGENT_LOG.md`、`REFLECTION.md`
+  - 读取 `HANDOFF.md`、`TASK.md`、`PLAN.md`、`SPEC.md`、`pyproject.toml`、全部源代码与测试文件、CI 配置、`AGENT_LOG.md`
   - 派出 2 个 search subagent 并行分析：核心模块代码质量 + 测试覆盖率与基础设施
 - **分析结果**：
   - 14/14 Task 全部完成，99 tests passed，HEAD `ac1d794`
@@ -615,3 +614,87 @@
 - **学到的教训**：
   - 中文字体应放在等宽英文字体之后，让英文优先使用等宽字体保持终端风格，中文回退到系统中文字体
   - `lang` 属性从 `en` 改为 `zh-CN` 有助于浏览器正确渲染和辅助技术识别
+
+---
+
+## 2026-07-15 02:30 — TASK.md 交付物合规检查
+
+- **时间戳**：2026-07-15 02:30
+- **阶段**：收尾验证
+- **触发的 Superpowers 技能**：无（只读分析）
+- **关键 prompt / context 配置**：
+  - 用户输入："根据task检查还有什么没完成"
+  - 读取 `TASK.md` 全文，逐条对照 §五 最终交付物清单（11 项）
+  - 派出 search subagent 检查 SPEC_PROCESS.md、REFLECTION.md、README.md、.gitlab-ci.yml、render.yaml 完整性
+- **检查结果**：
+  - ✅ 已完成（12 项）：SPEC.md、PLAN.md、SPEC_PROCESS.md、完整源代码、Dockerfile、README.md、AGENT_LOG.md、.gitlab-ci.yml、REFLECTION.md、render.yaml、demo.py、mock-LLM 单元测试
+  - ❌ 未完成（5 项）：
+    1. 18 个本地修改未提交推送（LLM API 扩展、CORS、PermissionError 修复、前端中文化等）
+    2. 8 个 feature 分支已合并但未删除
+    3. CI/CD 执行记录未确认（远程仓库缺少最新代码）
+    4. 线上部署 URL 未确认可访问
+    5. 临时文件（server_stdout.txt、server_stderr.txt、.trae/）未加入 .gitignore
+- **学到的教训**：
+  - 全流程合规检查应在开发末期做一次完整对照，容易遗漏的是"本地修改未推送"和"临时文件未清理"等非功能性项
+  - `.gitignore` 应在项目初期就覆盖所有可能的临时输出文件名变体
+
+---
+
+## 2026-07-15 02:40 — 提交推送本地修改
+
+- **时间戳**：2026-07-15 02:40
+- **阶段**：版本控制
+- **触发的 Superpowers 技能**：无
+- **关键 prompt / context 配置**：
+  - 用户输入："处理1"（指合规检查中的第 1 项：18 个本地修改未提交推送）
+- **执行过程**：
+  1. 更新 `.gitignore`：添加 `server_stdout.txt`、`server_stderr.txt`、`.trae/` 排除规则
+  2. `git add` 18 个修改文件（AGENT_LOG.md、README.md、SPEC.md、tests/*、the_harness/* 等）
+  3. `git commit`：commit message 涵盖 LLM API 扩展、CORS 修复、PermissionError 修复、前端中文化、10 个新测试、AGENT_LOG 更新
+  4. `git push origin main`：`ac1d794..f14d502`
+- **commit hash**：`f14d502`
+- **学到的教训**：
+  - PowerShell 不支持 bash heredoc 语法（`<<'EOF'`），多行 commit message 需使用 `git commit -F` 从文件读取
+  - 大批量提交时应确保 `.gitignore` 已覆盖所有临时文件，避免误提交
+
+---
+
+## 2026-07-15 03:00 — 修复 GitHub Actions CI 错误
+
+- **时间戳**：2026-07-15 03:00
+- **阶段**：CI/CD 修复
+- **触发的 Superpowers 技能**：无
+- **关键 prompt / context 配置**：
+  - 用户输入：CI 报 "1 error and 2 warnings" — docker-build 标签大写、Node.js 20 deprecation
+- **问题分析**：
+  1. **docker-build error**：`ghcr.io/${{ github.repository }}` 展开为 `ghcr.io/Levi-123a/theharness`，GHCR 要求 repository name 全小写
+  2. **unit-test warning**：`actions/checkout@v4`、`actions/setup-python@v5` 使用 Node.js 20，已被 GitHub 弃用
+  3. **docker-build warning**：`actions/checkout@v4`、`docker/build-push-action@v5`、`docker/setup-buildx-action@v3` 同样使用 Node.js 20
+- **修复**：
+  1. GHCR 标签改为硬编码小写：`ghcr.io/levi-123a/theharness:latest`
+  2. Actions 版本升级：`actions/checkout@v4→@v5`、`docker/build-push-action@v5→@v6`
+- **commit hash**：`2197b07`
+- **推送问题**：首次推送时 GitHub `github.com:443` TCP 连接超时（国内网络波动），重试 3 次后成功
+- **学到的教训**：
+  - `github.repository` 变量保留原始大小写，GHCR 标签必须手动转小写或使用 `${{ github.repository }}` 的 lowercase 变体
+  - GitHub Actions 的 Node.js 版本弃用是渐进式的——先 warning 后 error，应在 warning 阶段就升级
+
+---
+
+## 2026-07-15 03:20 — 修复 GHCR 推送认证 403 Forbidden
+
+- **时间戳**：2026-07-15 03:20
+- **阶段**：CI/CD 修复
+- **触发的 Superpowers 技能**：无
+- **关键 prompt / context 配置**：
+  - 用户输入：docker-build 报 "failed to fetch anonymous token: 403 Forbidden"
+- **问题分析**：
+  - `docker/build-push-action` 的 `push: true` 步骤在推送 GHCR 前未登录，以匿名身份请求 token 被 403 拒绝
+  - GitHub Actions 默认的 `GITHUB_TOKEN` 缺少 `packages: write` 权限，无法推送镜像到 GHCR
+- **修复**：
+  1. 添加 `docker/login-action@v3` 步骤，使用 `GITHUB_TOKEN`（GitHub Actions 自动提供）登录 `ghcr.io`
+  2. 在 `docker-build` job 添加 `permissions: contents: read, packages: write`
+- **commit hash**：`e8f731f`
+- **学到的教训**：
+  - GHCR 推送必须显式 `docker login`——`build-push-action` 不会自动认证
+  - GitHub Actions 的 `GITHUB_TOKEN` 默认只有 `contents: read` 权限，推送 packages 需在 job 级别声明 `permissions: packages: write`
