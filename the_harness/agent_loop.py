@@ -155,7 +155,7 @@ class AgentLoop:
             action_history=action_history,
         )
 
-    def run_freeform(self, task: Task) -> Result:
+    def run_freeform(self, task: Task, history: list[dict[str, str]] | None = None) -> Result:
         """Run the agent in freeform mode — no test validation, LLM decides when done.
 
         The agent reads, edits, writes files and runs shell commands based on
@@ -164,6 +164,10 @@ class AgentLoop:
 
         Args:
             task: The task with a ``description`` field containing user instructions.
+            history: Optional conversation history for continuation. Each item
+                     is ``{"role": "user"|"assistant", "content": "..."}``.
+                     When provided, the LLM receives previous Q&A pairs as
+                     context so it can answer follow-up questions.
 
         Returns:
             Result with success status, rounds, reason, and action history.
@@ -172,6 +176,13 @@ class AgentLoop:
             f"User instruction: {task.description}",
             f"Workspace: {task.workspace}",
         ]
+        # 将对话历史作为 system 上下文注入，让 LLM 理解之前聊了什么
+        if history:
+            history_lines = []
+            for h in history:
+                role = "用户" if h.get("role") == "user" else "助手"
+                history_lines.append(f"{role}: {h.get('content', '')}")
+            context_parts.insert(0, "对话历史:\n" + "\n".join(history_lines))
         action_history: list[Action] = []
 
         for round_num in range(1, self._config.max_rounds + 1):
@@ -186,7 +197,7 @@ class AgentLoop:
 
             # c. Check done / give_up
             if action.type == ActionType.DONE:
-                self._save_session(task, True, round_num, "Task completed", action_history)
+                self._save_session(task, True, round_num, "Task completed", action_history, final_reply=action.reasoning)
                 return Result(
                     success=True,
                     rounds=round_num,
@@ -194,7 +205,7 @@ class AgentLoop:
                     action_history=action_history,
                 )
             if action.type == ActionType.GIVE_UP:
-                self._save_session(task, False, round_num, "LLM gave up", action_history)
+                self._save_session(task, False, round_num, "LLM gave up", action_history, final_reply=action.reasoning)
                 return Result(
                     success=False,
                     rounds=round_num,
@@ -253,6 +264,7 @@ class AgentLoop:
         rounds: int,
         reason: str,
         action_history: list[Action],
+        final_reply: str = "",
     ) -> None:
         """Save session data to the memory store on all exit paths.
 
@@ -262,12 +274,30 @@ class AgentLoop:
             rounds: Number of rounds executed.
             reason: Exit reason.
             action_history: List of actions taken.
+            final_reply: The AI's final text reply (from done/give_up
+                         responses). For freeform sessions where the LLM
+                         immediately returns 'done', this is the only
+                         AI output — without it the session detail would
+                         show nothing.
         """
+        task_desc = task.test_path or task.description or ""
+        action_summaries = [a.reasoning for a in action_history if a.reasoning]
+        if final_reply:
+            action_summaries.append(final_reply)
+        summary = self._llm.summarize_session(
+            task_desc=task_desc,
+            action_summaries=action_summaries,
+            success=success,
+            reason=reason,
+        )
         self._memory.save_session({
             "test_path": task.test_path,
+            "description": task.description or "",
+            "final_reply": final_reply,
             "success": success,
             "rounds": rounds,
             "reason": reason,
+            "summary": summary,
             "actions": [
                 {
                     "round": i + 1,

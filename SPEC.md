@@ -144,15 +144,16 @@
 
 ### 3.8 WebUI（FastAPI）
 
-- **输入**：HTTP 请求（新建修复任务、自由指令任务、凭据管理、查询历史、WebSocket 连接）
+- **输入**：HTTP 请求（新建修复任务、自由指令任务、凭据管理、查询/删除历史、WebSocket 连接）
 - **行为**：
   - Fix Test 模式：接收 test 路径 → 启动 agent → WebSocket 推送实时输出 → 存储会话历史
   - Freeform 模式：接收用户文字描述 → 启动 freeform agent → WebSocket 推送实时输出（action/execution/result 事件）
-  - 凭据管理：通过 REST API 创建/解锁/存储/删除 API Key，无需 CLI
+  - 会话历史管理：列出会话、查看详情、单个删除（级联删除关联动作）、批量删除
+  - 凭据管理：通过 REST API 存储/查看/删除 API Key，无需 CLI
   - 前端模式切换：Fix Test / Freeform 标签切换，Settings 模态框管理 API Key
 - **输出**：流式 JSON 事件（action/execution/feedback/result/error）、历史会话列表、凭据状态
 - **边界条件**：同时只运行一个任务（fix 或 freeform）
-- **错误处理**：agent 异常时推送错误事件并记录；凭据未解锁时拒绝存储/删除操作
+- **错误处理**：agent 异常时推送错误事件并记录；删除不存在的会话返回 404
 
 **REST API 端点：**
 
@@ -162,9 +163,9 @@
 | `/api/instruct` | POST | 启动 Freeform 任务 |
 | `/api/sessions` | GET | 列出历史会话 |
 | `/api/sessions/{id}` | GET | 获取会话详情 |
-| `/api/credentials/setup` | POST | 创建凭据库（设置主密码） |
-| `/api/credentials/unlock` | POST | 解锁凭据库 |
-| `/api/credentials/status` | GET | 查看凭据库状态 |
+| `/api/sessions/{id}` | DELETE | 删除单个会话（级联删除关联 actions） |
+| `/api/sessions/batch-delete` | POST | 批量删除会话（Body: `{"ids": [...]}`） |
+| `/api/credentials/status` | GET | 查看凭据状态 |
 | `/api/credentials/store` | POST | 存储/更新 API Key |
 | `/api/credentials/{provider}` | DELETE | 删除 API Key |
 
@@ -330,14 +331,16 @@ session_history.db (SQLite)
 │   ├── success: bool
 │   ├── rounds: int
 │   ├── created_at: datetime
-│   └── reason: str
+│   ├── reason: str
+│   └── summary: str          # AI 生成的一句话摘要，侧边栏列表显示
 └── actions
     ├── id: int
     ├── session_id: int (FK)
     ├── round: int
     ├── action_type: str
     ├── action_params: str (JSON)
-    └── result: str (JSON)
+    ├── result: str (JSON)
+    └── reasoning: str         # AI 思考过程，详情视图渲染为气泡
 
 failure_patterns.json
 ├── failure_type: str

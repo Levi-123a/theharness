@@ -1,7 +1,9 @@
 // the-harness WebUI 前端逻辑
 
-const terminal = document.getElementById('terminal');
+const chatEl = document.getElementById('chat');
+const chatWrap = document.getElementById('chat-wrap');
 const sessionList = document.getElementById('session-list');
+const sessionEmpty = document.getElementById('session-empty');
 const startBtn = document.getElementById('start-btn');
 const instructBtn = document.getElementById('instruct-btn');
 const testPathInput = document.getElementById('test-path');
@@ -11,21 +13,211 @@ const instructionInput = document.getElementById('instruction');
 const settingsBtn = document.getElementById('settings-btn');
 const settingsModal = document.getElementById('settings-modal');
 const modalClose = document.getElementById('modal-close');
+const connStatus = document.getElementById('conn-status');
+const newChatBtn = document.getElementById('new-chat-btn');
 
 let currentMode = 'fix';
+// 对话历史：用于续接对话。每次用户发送消息时，将之前的对话作为上下文
+// 传给后端。"新对话"按钮清空此数组。
+let conversationHistory = [];
+// 当前 WebSocket 回复气泡的最终文本（用于回复完成后记入历史）
+let pendingReplyText = '';
 
-// ── 终端辅助 ──────────────────────────────────────────────
+// ── 状态指示 ──────────────────────────────────────────────
 
-function addLine(text, cls) {
-    const div = document.createElement('div');
-    div.className = 'terminal-line ' + (cls || '');
-    div.textContent = text;
-    terminal.appendChild(div);
-    terminal.scrollTop = terminal.scrollHeight;
+function setStatus(state, label) {
+    connStatus.className = 'conn-status ' + state;
+    connStatus.textContent = label;
 }
 
-function clearTerminal() {
-    terminal.innerHTML = '';
+// ── 聊天气泡辅助 ──────────────────────────────────────────
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+function timestamp() {
+    const d = new Date();
+    return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+function scrollToBottom() {
+    chatWrap.scrollTop = chatWrap.scrollHeight;
+}
+
+// 用户消息（右侧蓝色气泡）
+function addUserBubble(text, sub) {
+    const row = document.createElement('div');
+    row.className = 'msg-row user';
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble user-bubble';
+    bubble.textContent = text;
+    if (sub) {
+        const s = document.createElement('div');
+        s.className = 'bubble-sub';
+        s.textContent = sub;
+        bubble.appendChild(s);
+    }
+    const t = document.createElement('div');
+    t.className = 'msg-time';
+    t.textContent = timestamp();
+    row.appendChild(t);
+    row.appendChild(bubble);
+    chatEl.appendChild(row);
+    scrollToBottom();
+}
+
+// agent 消息（左侧浅色气泡）
+// headline: 大字主内容（AI 的实际回复 / 命令输出 / 测试输出 / 结束原因）
+// type: 用于头像和色条
+// meta: 小字标签（动作名/参数/状态摘要），显示在气泡顶部
+// detail: 折叠详情（命令输出、stdout 等），可选
+function addAgentBubble(text, type, detail, meta) {
+    const row = document.createElement('div');
+    row.className = 'msg-row agent';
+
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar avatar-' + (type || 'info');
+    avatar.textContent = AVATAR_ICON[type] || '·';
+
+    const col = document.createElement('div');
+    col.className = 'msg-col';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble agent-bubble b-' + (type || 'info');
+
+    // 小字标签（动作名/状态摘要）—— 放在气泡顶部
+    if (meta) {
+        const m = document.createElement('div');
+        m.className = 'bubble-meta';
+        m.textContent = meta;
+        bubble.appendChild(m);
+    }
+
+    // 大字主内容
+    const body = document.createElement('div');
+    body.className = 'bubble-headline';
+    body.textContent = text;
+    bubble.appendChild(body);
+
+    // 详情子块（可选）
+    if (detail) {
+        const d = document.createElement('div');
+        d.className = 'bubble-detail';
+        d.textContent = detail;
+        bubble.appendChild(d);
+    }
+
+    const t = document.createElement('div');
+    t.className = 'msg-time';
+    t.textContent = timestamp();
+
+    col.appendChild(bubble);
+    col.appendChild(t);
+    row.appendChild(avatar);
+    row.appendChild(col);
+    chatEl.appendChild(row);
+    scrollToBottom();
+}
+
+const AVATAR_ICON = {
+    action: '▶',
+    exec_ok: '✓',
+    exec_err: '✗',
+    feedback: '⟳',
+    result: '★',
+    error: '!',
+    info: 'AI',
+};
+
+// 创建一个可累积的 agent 回复气泡。
+// 一次用户输入只产生一个回复气泡：后续 action/execution/feedback
+// 事件都更新或追加到这同一个气泡里，而不是各开一个新气泡。
+function createReplyBubble() {
+    const row = document.createElement('div');
+    row.className = 'msg-row agent';
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar avatar-action';
+    avatar.textContent = AVATAR_ICON.action;
+    const col = document.createElement('div');
+    col.className = 'msg-col';
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble agent-bubble b-action';
+    const metaEl = document.createElement('div');
+    metaEl.className = 'bubble-meta';
+    metaEl.style.display = 'none';
+    const headlineEl = document.createElement('div');
+    headlineEl.className = 'bubble-headline';
+    const detailEl = document.createElement('div');
+    detailEl.className = 'bubble-detail';
+    detailEl.style.display = 'none';
+    bubble.appendChild(metaEl);
+    bubble.appendChild(headlineEl);
+    bubble.appendChild(detailEl);
+    const t = document.createElement('div');
+    t.className = 'msg-time';
+    t.textContent = timestamp();
+    col.appendChild(bubble);
+    col.appendChild(t);
+    row.appendChild(avatar);
+    row.appendChild(col);
+    chatEl.appendChild(row);
+    scrollToBottom();
+    return {
+        row,
+        setHeadline(text, type) {
+            headlineEl.textContent = text;
+            if (type) {
+                bubble.className = 'bubble agent-bubble b-' + type;
+                avatar.className = 'avatar avatar-' + type;
+                avatar.textContent = AVATAR_ICON[type] || '·';
+            }
+            scrollToBottom();
+        },
+        setMeta(text) {
+            metaEl.textContent = text || '';
+            metaEl.style.display = text ? 'block' : 'none';
+        },
+        appendDetail(label, content) {
+            const entry = document.createElement('div');
+            entry.className = 'detail-entry';
+            if (label) {
+                const lbl = document.createElement('div');
+                lbl.className = 'detail-label';
+                lbl.textContent = label;
+                entry.appendChild(lbl);
+            }
+            const cnt = document.createElement('div');
+            cnt.className = 'detail-content';
+            cnt.textContent = content;
+            entry.appendChild(cnt);
+            detailEl.appendChild(entry);
+            detailEl.style.display = 'block';
+            scrollToBottom();
+        },
+    };
+}
+
+// 低价值的成功原因 —— 不作为独立内容展示
+const LOW_VALUE_REASONS = /^(done|task completed|all tests passed|任务完成|任务成功)$/i;
+
+function addSystemNotice(text) {
+    const row = document.createElement('div');
+    row.className = 'msg-row system';
+    const n = document.createElement('div');
+    n.className = 'system-notice';
+    n.textContent = text;
+    row.appendChild(n);
+    chatEl.appendChild(row);
+    scrollToBottom();
+}
+
+function clearChat() {
+    chatEl.innerHTML = '';
+}
+
+// ── 会话列表空状态 ────────────────────────────────────────
+
+function toggleEmptyState(count) {
+    sessionEmpty.style.display = count === 0 ? 'block' : 'none';
 }
 
 // ── 模式切换 ──────────────────────────────────────────────
@@ -38,43 +230,212 @@ document.querySelectorAll('.tab').forEach(tab => {
         document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.mode === mode));
         document.getElementById('input-bar-fix').style.display = mode === 'fix' ? 'flex' : 'none';
         document.getElementById('input-bar-freeform').style.display = mode === 'freeform' ? 'flex' : 'none';
-        clearTerminal();
+        clearChat();
+        loadSessions();
     });
 });
 
 // ── 会话列表 ──────────────────────────────────────────────
 
+// 批量删除状态
+let selectionMode = false;
+const selectedIds = new Set();
+let currentWorkspace = '.';
+let lastSessions = [];
+const batchDeleteBtn = document.getElementById('batch-delete-btn');
+const batchToolbar = document.getElementById('batch-toolbar');
+const batchCount = document.getElementById('batch-count');
+const batchConfirmBtn = document.getElementById('batch-confirm-btn');
+const batchCancelBtn = document.getElementById('batch-cancel-btn');
+
 async function loadSessions() {
     const ws = (currentMode === 'fix' ? workspaceInput.value : workspaceFreeformInput.value) || '.';
+    currentWorkspace = ws;
     try {
         const resp = await fetch('/api/sessions?workspace=' + encodeURIComponent(ws));
-        const sessions = await resp.json();
-        sessionList.innerHTML = '';
-        for (const s of sessions) {
-            const li = document.createElement('li');
-            li.textContent = `#${s.id} ${s.test_path || s.description || ''}`;
-            const badge = document.createElement('span');
-            badge.className = 'badge ' + (s.success ? 'success' : 'fail');
-            badge.textContent = s.success ? '通过' : '失败';
-            li.appendChild(badge);
-            li.onclick = () => loadSessionDetail(s.id, ws);
-            sessionList.appendChild(li);
-        }
+        lastSessions = await resp.json();
+        renderSessions();
     } catch (e) {
         console.error('加载会话列表失败:', e);
     }
 }
 
+function renderSessions() {
+    const sessions = lastSessions;
+    const ws = currentWorkspace;
+    sessionList.innerHTML = '';
+    toggleEmptyState(sessions.length);
+    // "批量删除" 入口仅在非选择模式且有会话时可见
+    batchDeleteBtn.style.display = (sessions.length > 0 && !selectionMode) ? 'block' : 'none';
+    for (const s of sessions) {
+        const li = document.createElement('li');
+        if (selectionMode) li.classList.add('batch-mode');
+        if (selectedIds.has(s.id)) li.classList.add('selected');
+
+        if (selectionMode) {
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.className = 'session-checkbox';
+            cb.checked = selectedIds.has(s.id);
+            cb.onclick = (e) => e.stopPropagation();
+            cb.onchange = () => toggleSelection(s.id);
+            li.appendChild(cb);
+        }
+
+        const label = document.createElement('span');
+        label.className = 'session-label';
+        // Prefer AI-generated summary; fall back to test_path/description
+        const displayText = s.summary || s.test_path || s.description || '';
+        label.textContent = `#${s.id} ${displayText}`;
+        label.title = displayText; // tooltip with full text on hover
+        li.appendChild(label);
+
+        const badge = document.createElement('span');
+        badge.className = 'badge ' + (s.success ? 'success' : 'fail');
+        badge.textContent = s.success ? '通过' : '失败';
+        li.appendChild(badge);
+
+        if (!selectionMode) {
+            const delBtn = document.createElement('button');
+            delBtn.className = 'del-btn';
+            delBtn.textContent = '×';
+            delBtn.title = '删除此会话';
+            delBtn.onclick = (e) => { e.stopPropagation(); deleteSession(s.id); };
+            li.appendChild(delBtn);
+            li.onclick = () => loadSessionDetail(s.id, ws);
+        } else {
+            // 选择模式下点击整行切换选中状态
+            li.onclick = () => toggleSelection(s.id);
+        }
+
+        sessionList.appendChild(li);
+    }
+    updateBatchCount();
+}
+
+function toggleSelection(id) {
+    if (selectedIds.has(id)) {
+        selectedIds.delete(id);
+    } else {
+        selectedIds.add(id);
+    }
+    renderSessions();
+}
+
+function updateBatchCount() {
+    batchCount.textContent = `已选 ${selectedIds.size} 项`;
+    batchConfirmBtn.disabled = selectedIds.size === 0;
+}
+
+function enterBatchMode() {
+    selectionMode = true;
+    selectedIds.clear();
+    batchToolbar.style.display = 'flex';
+    renderSessions();
+}
+
+function exitBatchMode() {
+    selectionMode = false;
+    selectedIds.clear();
+    batchToolbar.style.display = 'none';
+    renderSessions();
+}
+
+async function deleteSession(id) {
+    if (!confirm(`确定删除会话 #${id} 吗？此操作不可撤销。`)) return;
+    try {
+        const resp = await fetch(
+            `/api/sessions/${id}?workspace=${encodeURIComponent(currentWorkspace)}`,
+            { method: 'DELETE' }
+        );
+        if (resp.status === 404) {
+            addAgentBubble('会话不存在或已被删除', 'error');
+        }
+        loadSessions();
+    } catch (e) {
+        addAgentBubble('删除失败: ' + e.message, 'error');
+    }
+}
+
+async function confirmBatchDelete() {
+    if (selectedIds.size === 0) return;
+    const ids = Array.from(selectedIds);
+    if (!confirm(`确定删除选中的 ${ids.length} 个会话吗？此操作不可撤销。`)) return;
+    try {
+        const resp = await fetch(
+            `/api/sessions/batch-delete?workspace=${encodeURIComponent(currentWorkspace)}`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: ids }),
+            }
+        );
+        const data = await resp.json();
+        if (data.ok) {
+            addSystemNotice(`已删除 ${data.deleted} 个会话`);
+        }
+        exitBatchMode();
+        loadSessions();
+    } catch (e) {
+        addAgentBubble('批量删除失败: ' + e.message, 'error');
+    }
+}
+
+batchDeleteBtn.addEventListener('click', enterBatchMode);
+batchCancelBtn.addEventListener('click', exitBatchMode);
+batchConfirmBtn.addEventListener('click', confirmBatchDelete);
+
 async function loadSessionDetail(id, workspace) {
     try {
         const resp = await fetch(`/api/sessions/${id}?workspace=${encodeURIComponent(workspace)}`);
         const data = await resp.json();
-        clearTerminal();
-        addLine(`会话 #${data.id}`, 'result');
-        addLine(`测试: ${data.test_path || data.description || '无'}`);
-        addLine(`成功: ${data.success}`);
-        addLine(`轮次: ${data.rounds}`);
-        addLine(`原因: ${data.reason}`);
+        clearChat();
+        // 显示用户消息（freeform 用 description，fix 模式用 test_path）
+        const userMsg = data.description || data.test_path || '';
+        if (userMsg) {
+            addUserBubble(userMsg, `会话 #${data.id}`);
+        } else {
+            addAgentBubble(`目标: 无`, 'info', null, `会话 #${data.id}`);
+        }
+        // 显示 AI 回复：优先用 final_reply（done/give_up 的 reasoning），
+        // 否则用 actions 中的内容
+        const actions = data.actions || [];
+        if (data.final_reply) {
+            // 有 AI 最终回复文本（freeform 常见情况）
+            const reply = createReplyBubble();
+            reply.setHeadline(data.final_reply, data.success ? 'result' : 'error');
+            // 如果有操作记录，折叠到详情区
+            if (actions.length > 0) {
+                const first = actions[0];
+                const params = first.action_params || {};
+                const paramsStr = Object.keys(params).length ? JSON.stringify(params) : '';
+                reply.setMeta(first.action_type + (paramsStr ? ' ' + paramsStr : ''));
+                for (const a of actions) {
+                    if (a.result) {
+                        reply.appendDetail(a.action_type, a.result);
+                    }
+                }
+            }
+        } else if (actions.length > 0) {
+            // 没有最终回复文本，用 actions 构建回复气泡
+            const reply = createReplyBubble();
+            const last = actions[actions.length - 1];
+            reply.setHeadline(last.reasoning || last.action_type || '', data.success ? 'action' : 'error');
+            const first = actions[0];
+            const params = first.action_params || {};
+            const paramsStr = Object.keys(params).length ? JSON.stringify(params) : '';
+            reply.setMeta(first.action_type + (paramsStr ? ' ' + paramsStr : ''));
+            for (const a of actions) {
+                if (a.result) {
+                    reply.appendDetail(a.action_type, a.result);
+                }
+            }
+            if (!data.success && data.reason && !LOW_VALUE_REASONS.test(data.reason.trim())) {
+                reply.setHeadline(data.reason, 'error');
+            }
+        } else if (!data.success && data.reason) {
+            addAgentBubble(data.reason, 'error');
+        }
     } catch (e) {
         console.error('加载会话详情失败:', e);
     }
@@ -86,13 +447,15 @@ startBtn.addEventListener('click', async () => {
     const testPath = testPathInput.value.trim();
     const workspace = workspaceInput.value.trim() || '.';
     if (!testPath) {
-        alert('请输入测试文件路径');
+        addAgentBubble('请输入测试文件路径', 'error');
+        testPathInput.focus();
         return;
     }
 
     startBtn.disabled = true;
-    clearTerminal();
-    addLine(`开始修复 ${testPath}...`, 'action');
+    setStatus('running', '运行中');
+    clearChat();
+    addUserBubble('修复测试 ' + testPath, '工作目录: ' + workspace);
 
     try {
         const resp = await fetch('/api/fix', {
@@ -102,15 +465,19 @@ startBtn.addEventListener('click', async () => {
         });
         const data = await resp.json();
         if (data.detail) {
-            addLine(`错误: ${data.detail}`, 'error');
+            addAgentBubble('请求失败: ' + data.detail, 'error');
             startBtn.disabled = false;
+            setStatus('error', '错误');
             return;
         }
+        testPathInput.value = '';
+        testPathInput.focus();
         const sessionId = data.session_id;
         connectWebSocket('fix', sessionId);
     } catch (e) {
-        addLine('错误: ' + e.message, 'error');
+        addAgentBubble('请求异常: ' + e.message, 'error');
         startBtn.disabled = false;
+        setStatus('error', '错误');
     }
 });
 
@@ -120,81 +487,131 @@ instructBtn.addEventListener('click', async () => {
     const description = instructionInput.value.trim();
     const workspace = workspaceFreeformInput.value.trim() || '.';
     if (!description) {
-        alert('请输入指令');
+        addAgentBubble('请输入指令', 'error');
+        instructionInput.focus();
         return;
     }
 
     instructBtn.disabled = true;
-    clearTerminal();
-    addLine(`指令: ${description}`, 'action');
-    addLine(`工作目录: ${workspace}`, 'action');
-    addLine('---', 'result');
+    setStatus('running', '运行中');
+    // 不清空聊天 —— 续接对话时保留之前的消息
+    addUserBubble(description, '工作目录: ' + workspace);
+    pendingReplyText = '';
 
     try {
         const resp = await fetch('/api/instruct', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ description: description, workspace: workspace }),
+            body: JSON.stringify({
+                description: description,
+                workspace: workspace,
+                history: conversationHistory,
+            }),
         });
         const data = await resp.json();
         if (data.detail) {
-            addLine(`错误: ${data.detail}`, 'error');
+            addAgentBubble('请求失败: ' + data.detail, 'error');
             instructBtn.disabled = false;
+            setStatus('error', '错误');
             return;
         }
+        instructionInput.value = '';
+        instructionInput.focus();
         const sessionId = data.session_id;
-        connectWebSocket('instruct', sessionId);
+        connectWebSocket('instruct', sessionId, description);
     } catch (e) {
-        addLine('错误: ' + e.message, 'error');
+        addAgentBubble('请求异常: ' + e.message, 'error');
         instructBtn.disabled = false;
+        setStatus('error', '错误');
+    }
+});
+
+// Ctrl+Enter 发送
+instructionInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        instructBtn.click();
     }
 });
 
 // ── WebSocket 连接 ────────────────────────────────────────
 
-function connectWebSocket(mode, sessionId) {
+function connectWebSocket(mode, sessionId, userMessage) {
     const wsUrl = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/${mode}/${sessionId}`;
     const ws = new WebSocket(wsUrl);
+
+    setStatus('connected', '已连接');
+    // 一次用户输入只对应一个累积回复气泡
+    let reply = null;
+    function ensureReply() {
+        if (!reply) reply = createReplyBubble();
+        return reply;
+    }
 
     ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
         if (msg.type === 'action') {
-            addLine(`[操作] ${msg.data.action} ${JSON.stringify(msg.data.params)}`, 'action');
-            if (msg.data.reasoning) {
-                addLine(`  原因: ${msg.data.reasoning}`, 'action');
-            }
+            const params = msg.data.params;
+            const paramsStr = Object.keys(params).length ? JSON.stringify(params) : '';
+            // reasoning 是 AI 的实际思考 → 更新为气泡主内容
+            const headline = msg.data.reasoning || msg.data.action;
+            ensureReply().setHeadline(headline, 'action');
+            ensureReply().setMeta(msg.data.action + (paramsStr ? ' ' + paramsStr : ''));
+            // 记录回复文本用于对话历史
+            if (msg.data.reasoning) pendingReplyText = msg.data.reasoning;
         } else if (msg.type === 'execution') {
-            const status = msg.data.success ? '成功' : '失败';
-            addLine(`[执行 ${status}] ${msg.data.action}`, msg.data.success ? 'feedback' : 'error');
-            if (msg.data.output) {
-                addLine(msg.data.output, 'feedback');
-            }
-            if (msg.data.error) {
-                addLine(`  错误: ${msg.data.error}`, 'error');
-            }
+            // 执行输出折叠到详情区，不单独开气泡
+            const output = msg.data.error
+                ? '错误: ' + msg.data.error + (msg.data.output ? '\n' + msg.data.output : '')
+                : (msg.data.output || (msg.data.success ? '完成' : '失败'));
+            const label = msg.data.action + (msg.data.success ? ' · 成功' : ' · 失败');
+            ensureReply().appendDetail(label, output);
         } else if (msg.type === 'feedback') {
-            addLine(`[反馈] 通过=${msg.data.passed} 退出码=${msg.data.exit_code}`, 'feedback');
-            if (msg.data.stdout) addLine(msg.data.stdout, 'feedback');
+            // 测试输出折叠到详情区
+            const verdict = msg.data.passed ? '通过' : '未通过';
+            const output = msg.data.stdout || (msg.data.passed ? '测试通过' : '测试失败');
+            ensureReply().appendDetail('测试 ' + verdict, output);
         } else if (msg.type === 'result') {
-            addLine(`[结果] 成功=${msg.data.success} 轮次=${msg.data.rounds} 原因=${msg.data.reason}`, 'result');
+            // 抑制低价值的成功信息；仅失败时更新主内容
+            const reason = (msg.data.reason || '').trim();
+            if (!msg.data.success) {
+                ensureReply().setHeadline(reason || '任务失败', 'error');
+                if (reason) pendingReplyText = reason;
+            }
         } else if (msg.type === 'error') {
-            addLine(`[错误] ${msg.data.message}`, 'error');
+            ensureReply().setHeadline(msg.data.message, 'error');
         }
     };
 
     ws.onclose = () => {
-        addLine('--- 会话已结束 ---', 'result');
         startBtn.disabled = false;
         instructBtn.disabled = false;
+        setStatus('idle', '就绪');
+        // 将本次对话记入历史，供下次续接
+        if (userMessage && pendingReplyText) {
+            conversationHistory.push({ role: 'user', content: userMessage });
+            conversationHistory.push({ role: 'assistant', content: pendingReplyText });
+        }
+        pendingReplyText = '';
         loadSessions();
     };
 
     ws.onerror = () => {
-        addLine('WebSocket 连接错误', 'error');
+        ensureReply().setHeadline('WebSocket 连接错误', 'error');
         startBtn.disabled = false;
         instructBtn.disabled = false;
+        setStatus('error', '连接错误');
     };
 }
+
+// ── 新对话 ────────────────────────────────────────────────
+
+newChatBtn.addEventListener('click', () => {
+    conversationHistory = [];
+    pendingReplyText = '';
+    clearChat();
+    addAgentBubble('已开始新对话，请输入您的需求。', 'info');
+});
 
 // ── 设置弹窗 ──────────────────────────────────────────────
 
@@ -213,33 +630,27 @@ settingsModal.addEventListener('click', (e) => {
     }
 });
 
+// Esc 关闭弹窗
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && settingsModal.style.display === 'flex') {
+        settingsModal.style.display = 'none';
+    }
+});
+
 async function refreshCredStatus() {
     const statusText = document.getElementById('cred-status-text');
-    const setupSection = document.getElementById('cred-setup-section');
-    const unlockSection = document.getElementById('cred-unlock-section');
-    const manageSection = document.getElementById('cred-manage-section');
 
     try {
         const resp = await fetch('/api/credentials/status');
         const data = await resp.json();
 
-        if (!data.exists) {
-            statusText.textContent = '未找到凭据存储，请在下方创建。';
-            setupSection.style.display = 'block';
-            unlockSection.style.display = 'none';
-            manageSection.style.display = 'none';
-        } else if (!data.unlocked) {
-            statusText.textContent = '凭据存储已存在但已锁定。';
-            setupSection.style.display = 'none';
-            unlockSection.style.display = 'block';
-            manageSection.style.display = 'none';
+        const count = Object.keys(data.providers || {}).length;
+        if (count === 0) {
+            statusText.textContent = '暂无已存储的密钥，请在下方添加。';
         } else {
-            statusText.textContent = '已解锁，请在下方管理您的 API 密钥。';
-            setupSection.style.display = 'none';
-            unlockSection.style.display = 'none';
-            manageSection.style.display = 'block';
-            renderProviderList(data.providers);
+            statusText.textContent = `已配置 ${count} 个服务商。`;
         }
+        renderProviderList(data.providers || {});
     } catch (e) {
         statusText.textContent = '检查状态出错: ' + e.message;
     }
@@ -250,7 +661,9 @@ function renderProviderList(providers) {
     list.innerHTML = '';
     const providerNames = Object.keys(providers);
     if (providerNames.length === 0) {
-        list.innerHTML = '<li>暂无已存储的密钥。</li>';
+        const li = document.createElement('li');
+        li.innerHTML = '<span style="color: var(--text-faint)">暂无已存储的密钥</span>';
+        list.appendChild(li);
         return;
     }
     for (const name of providerNames) {
@@ -286,47 +699,9 @@ async function deleteProvider(name) {
         await fetch(`/api/credentials/${name}`, { method: 'DELETE' });
         refreshCredStatus();
     } catch (e) {
-        alert('删除失败: ' + e.message);
+        addLine('删除失败: ' + e.message, 'error');
     }
 }
-
-// 创建凭据存储
-document.getElementById('setup-btn').addEventListener('click', async () => {
-    const password = document.getElementById('setup-password').value;
-    if (!password) { alert('请输入密码'); return; }
-    try {
-        const resp = await fetch('/api/credentials/setup', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ master_password: password }),
-        });
-        const data = await resp.json();
-        if (data.detail) { alert(data.detail); return; }
-        document.getElementById('setup-password').value = '';
-        refreshCredStatus();
-    } catch (e) {
-        alert('创建失败: ' + e.message);
-    }
-});
-
-// 解锁
-document.getElementById('unlock-btn').addEventListener('click', async () => {
-    const password = document.getElementById('unlock-password').value;
-    if (!password) { alert('请输入密码'); return; }
-    try {
-        const resp = await fetch('/api/credentials/unlock', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ master_password: password }),
-        });
-        const data = await resp.json();
-        if (data.detail) { alert(data.detail); return; }
-        document.getElementById('unlock-password').value = '';
-        refreshCredStatus();
-    } catch (e) {
-        alert('解锁失败: ' + e.message);
-    }
-});
 
 // 保存密钥
 document.getElementById('cred-store-btn').addEventListener('click', async () => {
@@ -334,8 +709,8 @@ document.getElementById('cred-store-btn').addEventListener('click', async () => 
     const apiKey = document.getElementById('cred-key-input').value.trim();
     const baseUrl = document.getElementById('cred-base-url').value.trim();
     const model = document.getElementById('cred-model').value.trim();
-    if (!provider) { alert('请输入服务商名称'); return; }
-    if (!apiKey) { alert('请输入 API 密钥'); return; }
+    if (!provider) { addLine('请输入服务商名称', 'error'); return; }
+    if (!apiKey) { addLine('请输入 API 密钥', 'error'); return; }
     try {
         const resp = await fetch('/api/credentials/store', {
             method: 'POST',
@@ -343,17 +718,19 @@ document.getElementById('cred-store-btn').addEventListener('click', async () => 
             body: JSON.stringify({ provider: provider, api_key: apiKey, base_url: baseUrl, model: model }),
         });
         const data = await resp.json();
-        if (data.detail) { alert(data.detail); return; }
+        if (data.detail) { addLine(data.detail, 'error'); return; }
         document.getElementById('cred-provider-name').value = '';
         document.getElementById('cred-key-input').value = '';
         document.getElementById('cred-base-url').value = '';
         document.getElementById('cred-model').value = '';
         refreshCredStatus();
     } catch (e) {
-        alert('保存失败: ' + e.message);
+        addLine('保存失败: ' + e.message, 'error');
     }
 });
 
 // ── 初始化 ────────────────────────────────────────────────
 
+toggleEmptyState(0);
 loadSessions();
+setStatus('idle', '就绪');

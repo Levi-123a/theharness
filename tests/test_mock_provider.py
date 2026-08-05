@@ -57,3 +57,47 @@ def test_reset_restarts_sequence():
     msg = provider.complete([])
     assert msg["action"] == "edit_file"
     assert msg["reasoning"] == "first"
+
+
+def test_summarize_session_returns_string():
+    """summarize_session() should return a non-empty summary string.
+
+    The session list sidebar displays this summary so users can tell
+    sessions apart at a glance, instead of seeing just '#5'.
+    """
+    provider = MockLLMProvider([])
+    summary = provider.summarize_session(
+        task_desc="修复 tests/test_foo.py",
+        action_summaries=["读取了 src/foo.py", "修改了变量赋值"],
+        success=True,
+        reason="All tests passed",
+    )
+    assert isinstance(summary, str)
+    assert len(summary) > 0
+
+
+def test_summarize_session_does_not_consume_preset_actions():
+    """summarize_session() must NOT consume preset actions from complete().
+
+    The mock provider returns actions sequentially; if summarize_session
+    accidentally called complete(), it would eat an action and break
+    the agent loop's expectations.
+    """
+    actions = [
+        {"action": "edit_file", "params": {}, "reasoning": "fix"},
+        {"action": "done", "params": {}, "reasoning": "finished"},
+    ]
+    provider = MockLLMProvider(actions)
+
+    provider.summarize_session(
+        task_desc="task",
+        action_summaries=["did something"],
+        success=True,
+        reason="done",
+    )
+
+    # Both preset actions should still be available
+    msg = provider.complete([])
+    assert msg["action"] == "edit_file"
+    msg2 = provider.complete([])
+    assert msg2["action"] == "done"

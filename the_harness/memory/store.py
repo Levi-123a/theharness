@@ -41,7 +41,10 @@ class MemoryStore:
                     success INTEGER NOT NULL,
                     rounds INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
-                    reason TEXT
+                    reason TEXT,
+                    summary TEXT,
+                    description TEXT,
+                    final_reply TEXT
                 )
             """)
             conn.execute("""
@@ -52,9 +55,25 @@ class MemoryStore:
                     action_type TEXT NOT NULL,
                     action_params TEXT,
                     result TEXT,
+                    reasoning TEXT,
                     FOREIGN KEY (session_id) REFERENCES sessions(id)
                 )
             """)
+            # Add reasoning column to existing databases (added in a later
+            # version than the original schema).  ALTER ... ADD COLUMN errors
+            # if the column already exists, so we introspect first.
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(actions)").fetchall()}
+            if "reasoning" not in cols:
+                conn.execute("ALTER TABLE actions ADD COLUMN reasoning TEXT")
+            # Add summary column to existing sessions tables (added in a
+            # later version). Same introspect-first pattern.
+            session_cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+            if "summary" not in session_cols:
+                conn.execute("ALTER TABLE sessions ADD COLUMN summary TEXT")
+            if "description" not in session_cols:
+                conn.execute("ALTER TABLE sessions ADD COLUMN description TEXT")
+            if "final_reply" not in session_cols:
+                conn.execute("ALTER TABLE sessions ADD COLUMN final_reply TEXT")
             conn.commit()
         finally:
             conn.close()
@@ -102,25 +121,29 @@ class MemoryStore:
         conn = sqlite3.connect(str(self._db_path))
         try:
             cur = conn.execute(
-                "INSERT INTO sessions (test_path, success, rounds, created_at, reason) VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO sessions (test_path, success, rounds, created_at, reason, summary, description, final_reply) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     session_data["test_path"],
                     1 if session_data["success"] else 0,
                     session_data["rounds"],
                     created_at,
                     session_data.get("reason", ""),
+                    session_data.get("summary", ""),
+                    session_data.get("description", ""),
+                    session_data.get("final_reply", ""),
                 ),
             )
             session_id = cur.lastrowid
             for action in session_data.get("actions", []):
                 conn.execute(
-                    "INSERT INTO actions (session_id, round, action_type, action_params, result) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO actions (session_id, round, action_type, action_params, result, reasoning) VALUES (?, ?, ?, ?, ?, ?)",
                     (
                         session_id,
                         action.get("round", 0),
                         action.get("action_type", ""),
                         json.dumps(action.get("action_params", {})),
                         action.get("result", ""),
+                        action.get("reasoning", ""),
                     ),
                 )
             conn.commit()
@@ -148,9 +171,104 @@ class MemoryStore:
                 "rounds": row["rounds"],
                 "created_at": row["created_at"],
                 "reason": row["reason"],
+                "summary": row["summary"] or "",
+                "description": row["description"] or "",
+                "final_reply": row["final_reply"] or "",
             }
             for row in rows
         ]
+
+    def get_session(self, session_id: int) -> dict[str, Any] | None:
+        """Retrieve a single session with its full actions list by ID.
+
+        Unlike ``get_sessions`` (which returns summary rows for the sidebar
+        list), this returns the complete session including the ``actions``
+        list, which the WebUI renders as conversation bubbles when a past
+        session is opened.
+
+        Args:
+            session_id: The session ID to look up.
+
+        Returns:
+            The session dict with an ``actions`` key, or None if not found.
+        """
+        conn = sqlite3.connect(str(self._db_path))
+        try:
+            conn.row_factory = sqlite3.Row
+            session_row = conn.execute(
+                "SELECT * FROM sessions WHERE id = ?", (session_id,)
+            ).fetchone()
+            if not session_row:
+                return None
+            session = dict(session_row)
+            session["success"] = bool(session["success"])
+            session["summary"] = session.get("summary") or ""
+            session["description"] = session.get("description") or ""
+            session["final_reply"] = session.get("final_reply") or ""
+            action_rows = conn.execute(
+                "SELECT * FROM actions WHERE session_id = ? ORDER BY round",
+                (session_id,),
+            ).fetchall()
+            session["actions"] = [
+                {
+                    "round": a["round"],
+                    "action_type": a["action_type"],
+                    "action_params": json.loads(a["action_params"] or "{}"),
+                    "result": a["result"],
+                    "reasoning": a["reasoning"],
+                }
+                for a in action_rows
+            ]
+            return session
+        finally:
+            conn.close()
+
+    def delete_session(self, session_id: int) -> bool:
+        """Delete a single session and its actions by ID.
+
+        Args:
+            session_id: The session ID to delete.
+
+        Returns:
+            True if a row was deleted, False if the session didn't exist.
+        """
+        conn = sqlite3.connect(str(self._db_path))
+        try:
+            # FK ON DELETE is not enforced by default in sqlite without
+            # PRAGMA foreign_keys=ON, so explicitly delete actions first.
+            conn.execute("DELETE FROM actions WHERE session_id = ?", (session_id,))
+            cur = conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
+    def delete_sessions(self, session_ids: list[int]) -> int:
+        """Delete multiple sessions and their actions in one transaction.
+
+        Args:
+            session_ids: List of session IDs to delete.
+
+        Returns:
+            The number of sessions actually deleted (unknown ids are skipped).
+        """
+        if not session_ids:
+            return 0
+        conn = sqlite3.connect(str(self._db_path))
+        try:
+            placeholders = ",".join("?" for _ in session_ids)
+            conn.execute(
+                f"DELETE FROM actions WHERE session_id IN ({placeholders})",
+                session_ids,
+            )
+            cur = conn.execute(
+                f"DELETE FROM sessions WHERE id IN ({placeholders})",
+                session_ids,
+            )
+            conn.commit()
+            return cur.rowcount
+        finally:
+            conn.close()
 
     def save_failure_pattern(self, failure_type: str, strategy: str) -> None:
         """Save or update a failure pattern strategy.

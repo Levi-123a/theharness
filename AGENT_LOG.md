@@ -698,3 +698,161 @@
 - **学到的教训**：
   - GHCR 推送必须显式 `docker login`——`build-push-action` 不会自动认证
   - GitHub Actions 的 `GITHUB_TOKEN` 默认只有 `contents: read` 权限，推送 packages 需在 job 级别声明 `permissions: packages: write`
+
+---
+
+## 2026-07-15 04:00 — 文档中文化与 GitHub 介绍
+
+- **时间戳**：2026-07-15 04:00
+- **阶段**：文档收尾
+- **触发的 Superpowers 技能**：无
+- **关键 prompt / context 配置**：
+  - 用户输入："把readme等英文文件改成中文的，在readme中加上介绍当前项目github网站的内容"
+- **完成内容**：
+  1. 将 `README.md` 全文翻译为中文，新增「GitHub 项目网站」章节（仓库地址、克隆命令、Docker 镜像地址、仓库内容概览表、CI/CD 状态说明）
+  2. 将 `PLAN.md` 全文翻译为中文（含 14 个 task 的目标/依赖/文件/验证步骤/总结表）
+  3. 其他文档（SPEC.md、SPEC_PROCESS.md、HANDOFF.md、TASK.md、AGENT_LOG.md、REFLECTION.md）已是中文，无需修改
+- **学到的教训**：
+  - 文档翻译需保留代码标识符、commit hash、命令行原文，只翻译叙述性文字
+
+---
+
+## 2026-07-15 04:20 — WebUI 前端重新设计
+
+- **时间戳**：2026-07-15 04:20
+- **阶段**：前端优化
+- **触发的 Superpowers 技能**：`frontend-skill`
+- **关键 prompt / context 配置**：
+  - 用户输入："Use Skill: frontend-skill 完善前端,注意补充文档"
+- **设计方向**：
+  - 视觉定位：聚焦的编程工作空间——深邃暗色面板、单一靛蓝(#6366f1)强调色、终端级等宽字体、克制的间距
+  - 遵循 frontend-skill 的 App 指导原则：Linear 风格的克制美学、层级清晰、少色彩、信息密集但可读、最小装饰
+- **修改文件**：
+  1. `index.html` — 新增品牌标识区（brand-dot + brand-name）、会话列表空状态、连接状态指示器、终端光标、设置按钮 SVG 图标
+  2. `style.css` — 完全重写：CSS 变量系统(--bg/--surface/--accent/--green/--red 等)、终端行入场动画(lineIn)、光标闪烁(blink)、按钮悬浮微位移、弹窗模糊背景+缩放入场、自定义滚动条、连接状态脉冲动画(pulse)、响应式断点
+  3. `app.js` — 新增 `setStatus()` 连接状态管理（idle/running/connected/error 四态）、会话列表空状态切换、Esc 键关闭弹窗、alert 替换为终端内错误输出、终端输出层级区分(dim/action/feedback/result/error)
+- **验证**：109 个测试全部通过（含 9 个 WebUI 测试）
+- **学到的教训**：
+  - App UI 应遵循 utility copy 原则：状态标签用"就绪/运行中/已连接"而非营销语言
+  - CSS 变量系统让主题一致性和后续维护成本大幅降低
+  - 终端行入场动画(0.2s fade-up)为流式输出带来"活"的感觉，但不能过长以免干扰阅读
+
+---
+
+## 2026-08-05 17:30 — 凭据管理重构为 OS 钥匙串 (keyring)
+
+- **时间戳**：2026-08-05 17:30
+- **阶段**：凭据安全重构
+- **触发的 Superpowers 技能**：`test-driven-development`
+- **关键 prompt / context 配置**：
+  - 用户输入："api密钥设置主密码是什么,感觉没有必要 Use Skill: test-driven-development"
+  - 随后追问："根据task.md文档检查存储好一个api密钥供用户直接使用是否是正确的,如果是的话应该怎样完成,如果不是的话说明原因"
+  - 加载 `test-driven-development` 技能，对照 `TASK.md` §3.1 凭据安全存储要求逐条审查
+- **审查结论**：预置共享 API 密钥供所有用户使用**不正确**，违反 TASK.md §3.1 三项规定：
+  1. 违反"绝不提交进 Git"——分发共享 key 等于公开 key
+  2. 违反"绝不写入明文配置文件"——`.env` 为明文
+  3. 违反"首次运行应能引导用户安全录入 key"——预置 key 跳过引导
+- **同时发现**：原 `manager.py` 是明文 JSON 文件存储（仅 `chmod 600`），本身也违反 §3.1
+- **正确方案与实施**（TDD 全流程）：
+  1. **RED**：`tests/test_credential_manager.py` 已编写 11 个针对 keyring 的测试；运行确认因 `manager` 模块无 `keyring` 属性而失败（AttributeError）
+  2. **GREEN**：重写 `the_harness/credentials/manager.py`，使用 `keyring` 模块对接 OS 钥匙串（Windows Credential Manager / macOS Keychain / Linux Secret Service）：
+     - `__init__(service_name)` 接收服务名而非文件路径
+     - `store/get/delete` 通过 `keyring.set_password/get_password/delete_password` 操作
+     - 维护 `__providers__` index key 追踪已存 provider 列表（keyring 无原生列举功能）
+     - `get()` 支持 keyring → 环境变量回退（仅 `openai` provider，兼容 DeepSeek 等 OpenAI 兼容端点）
+  3. **修复测试 fixture bug**：`cred_manager` fixture 原 `with patch(...)` 在返回后退出导致后续调用写入真实 keychain；改为 `yield` 式保持 patch 作用域，并清理环境变量保证 `status()` 测试确定性
+  4. **更新 `app.py`**：用 `_SERVICE_NAME = "the-harness"` 常量替换 `_CREDENTIAL_FILE`；启动时通过 `python-dotenv` 加载 `.env`（带明文风险注释）；`credentials_status` 端点移除 `exists` 字段
+  5. **更新 `cli.py`**：用 `_SERVICE_NAME` 替换 `_DEFAULT_PATH`，移除文件路径与 `Path.mkdir` 调用
+  6. **重写 `tests/test_cli.py`**：mock keyring 而非文件系统，验证 keyring 调用而非文件存在
+  7. **更新 `tests/test_webui.py`**：将 `test_credential_file_default_path_uses_module_location` 替换为 `test_credential_service_name_is_fixed_string`，反映"无文件路径、service_name 为固定字符串"的新设计
+  8. **创建 `.env.example`**：模板文件（不含真实 key），含使用说明、明文风险警告、查找优先级说明、DeepSeek 配置示例
+  9. **依赖更新**：`pyproject.toml` 移除未使用的 `cryptography`，添加 `keyring>=24.0` 和 `python-dotenv>=1.0`
+- **验证**：全量 103 个测试通过（11 credential + 11 cli + 10 webui + 71 其他），无回归
+- **人工干预**：
+  - 拒绝了"创建含真实 DeepSeek key 的 `.env`"的方案，改为只提供 `.env.example` 模板
+  - 修复测试 fixture 作用域 bug（原 fixture 退出 `with` 后 mock 失效）
+- **学到的教训**：
+  - **TDD fixture 作用域陷阱**：`with patch(...)` 在 fixture 返回后退出，导致测试操作真实系统资源；必须用 `yield` 保持 patch 作用域
+  - **keyring 无列举 API**：需自行维护 provider index（用一个特殊 username 存 JSON 数组）
+  - **环境变量回退的双刃剑**：方便 `.env` 预配置，但会让 `status()` 测试依赖环境变量；测试必须显式清理
+  - **TASK.md §3.1 的判读**：环境变量作为"一种来源"是允许的，但用途是让每个用户加载自己的 key，不是让开发者预置共享 key
+  - **明文存储的层级**：`chmod 600` 不等于"安全存储"；TASK.md 要求的是 OS 钥匙串/KMS/加密文件三选一，明文文件不论权限都不合规
+
+---
+
+## 2026-08-05 18:00 — 修复历史会话不显示对话内容 + AI 会话摘要
+
+- **时间戳**：2026-08-05 18:00
+- **阶段**：Bug 修复 + 功能增强
+- **触发的 Superpowers 技能**：`test-driven-development`（完整 Red-Green-Refactor 循环）
+- **关键 prompt / context 配置**：
+  - 用户输入1："在对话完成后,在会话列表直接打开没有显示对话内容,只显示了会话 #3 · 目标: 无,成功 · 共 1 轮 Task completed等字样,修复这个问题 Use Skill: test-driven-development"
+  - 用户输入2："会话列表只显示#加数字,能不能让ai进行总结从而让会话列表更直观的显示这个会话内容大致是什么 Use Skill: test-driven-development ,完成后完善和补充各个文档"
+- **Bug 1：历史会话不显示对话内容**
+  - **根因**：WebUI `/api/sessions/{id}` 路由使用 `get_sessions()`（列表方法），该方法只返回摘要字段（id/test_path/success/rounds/reason），**不包含 `actions` 列表**。前端因此只能渲染摘要气泡，无法渲染完整对话。
+  - **TDD 流程**：
+    1. RED：`test_get_session_detail_returns_actions` 断言响应含 `actions` 列表 → 失败（`KeyError: 'actions'`）
+    2. GREEN：在 `MemoryStore` 新增 `get_session(id)` 方法（查询 sessions + actions 表，返回完整会话）；路由改用 `get_session(id)`
+    3. 前端 `loadSessionDetail` 遍历 `data.actions` 渲染聊天气泡
+  - **浏览器验证**：点击会话 #5 后渲染出 14 个气泡，包含之前缺失的推理气泡
+- **功能 2：AI 会话摘要**
+  - **设计**：会话结束时由 LLM 生成一句话摘要，存入 `sessions.summary` 列，侧边栏列表显示摘要替代 `#5 tests/test_foo.py`
+  - **TDD 流程（4 层 Red-Green）**：
+    1. **MemoryStore 层**：RED `test_save_and_get_session_summary` 断言 `summary` 字段存储与返回 → 失败（`KeyError: 'summary'`）。GREEN：`sessions` 表新增 `summary` 列（含 `ALTER TABLE` 旧库迁移），`save_session`/`get_sessions`/`get_session` 均返回 `summary`
+    2. **LLM Provider 层**：RED `test_summarize_session_returns_string` + `test_summarize_session_does_not_consume_preset_actions` → 失败（`AttributeError`）。GREEN：`LLMProvider` 基类新增 `summarize_session()` 默认实现（从输入推导，不调 LLM）；`MockLLMProvider` 覆盖为确定性返回；`OpenAILLMProvider` 覆盖为直接 API 调用（不走 `complete()`，异常时回退基类）
+    3. **AgentLoop 层**：RED `test_session_summary_generated_and_saved` 断言保存的 session 含非空 `summary` → 失败（`'' != ''`）。GREEN：`_save_session` 在保存前调用 `self._llm.summarize_session()`，将结果写入 `summary` 字段
+    4. **WebUI 层**：`_EmittingLLM` 新增 `summarize_session` 代理方法（不发射事件，避免干扰 WebSocket 消费者）；前端 `loadSessions` 优先显示 `s.summary`，回退到 `s.test_path || s.description`
+  - **浏览器验证**：会话 #6 显示 `#6 修复了 foo 模块中的变量赋值错误 通过`，会话 #5 无摘要时回退显示 `#5 tests/test_demo.py 通过`
+  - **验证**：全量 115 个测试通过（110 原有 + 5 新增），无回归
+- **涉及文件**：
+  - `the_harness/memory/store.py` — 新增 `get_session(id)` 方法、`summary` 列
+  - `the_harness/llm/base.py` — 新增 `summarize_session()` 默认实现
+  - `the_harness/llm/mock_provider.py` — 覆盖 `summarize_session()`
+  - `the_harness/llm/openai_provider.py` — 覆盖 `summarize_session()`（直接 API 调用 + 回退）
+  - `the_harness/agent_loop.py` — `_save_session` 调用 `summarize_session`
+  - `the_harness/webui/app.py` — 路由改用 `get_session`；`_EmittingLLM` 代理 `summarize_session`
+  - `the_harness/webui/static/app.js` — `loadSessionDetail` 渲染 actions；`loadSessions` 显示 summary
+  - `tests/test_memory_store.py`、`tests/test_mock_provider.py`、`tests/test_agent_loop.py`、`tests/test_webui.py` — 新增 9 个测试
+- **学到的教训**：
+  - **列表 API 与详情 API 的分离**：`get_sessions()` 返回轻量摘要供列表用，`get_session(id)` 返回完整数据含 `actions` 供详情用。混用会导致前端拿不到渲染所需的完整数据
+  - **summarize_session 不应走 complete()**：`complete()` 返回 `{action, params, reasoning}` 结构且 MockLLMProvider 会消耗预设 action；摘要需要独立的 API 调用路径
+  - **_EmittingLLM 代理的谨慎处理**：`summarize_session` 在 agent loop 结束后调用，若发射 "action" 事件会干扰 WebSocket 消费者，因此代理方法只转发不发射
+  - **ALTER TABLE 迁移模式**：新增列时先 `PRAGMA table_info` 检查列是否存在，不存在才 `ALTER TABLE ADD COLUMN`，保证旧数据库无缝升级
+
+---
+
+## 2026-08-05 18:30 — 会话列表删除功能（单个 + 批量）
+
+- **时间戳**：2026-08-05 18:30
+- **阶段**：功能增强
+- **触发的 Superpowers 技能**：`test-driven-development`（完整 Red-Green-Refactor 循环）
+- **关键 prompt / context 配置**：
+  - 用户输入："增加删除会话列表中过往会话的功能,支持批量删除和单个删除 Use Skill: test-driven-development ,根据task.md补充完善需要补充完善的文档"
+  - 加载 `test-driven-development` 技能，承接上一会话已完成的 MemoryStore 层 `delete_session` / `delete_sessions` 测试与实现
+- **执行过程（3 层 Red-Green）**：
+  1. **MemoryStore 层**（上一会话已完成）：`delete_session(id)` 级联删除会话及其 actions，返回 `bool`；`delete_sessions([ids])` 批量删除，返回实际删除数。3 个测试：`test_delete_session_removes_session_and_actions`、`test_delete_session_returns_false_for_missing`、`test_delete_sessions_batch_removes_multiple`
+  2. **WebUI 后端层**：
+     - RED：在 `tests/test_webui.py` 新增 4 个测试——`test_delete_session_endpoint`（DELETE 后会话从列表和详情中消失）、`test_delete_session_endpoint_returns_404_for_missing`、`test_delete_sessions_batch_endpoint`（批量删除返回 `deleted` 计数，未知 id 静默跳过）、`test_delete_sessions_batch_endpoint_handles_empty_ids`。运行确认 RED（`405 Method Not Allowed`，端点不存在）
+     - GREEN：在 `the_harness/webui/app.py` 新增 `DELETE /api/sessions/{session_id}`（返回 `{"ok": true}` 或 404）和 `POST /api/sessions/batch-delete`（Body `{"ids": [...]}`，返回 `{"ok": true, "deleted": N}`）。4 个测试通过
+  3. **前端 UI 层**：
+     - `index.html`：侧边栏 "会话列表" 标签旁新增 "批量删除" 链接按钮；新增批量操作工具栏（已选计数 + "删除选中" + "取消"）
+     - `style.css`：新增 `.link-btn`、`.batch-toolbar`、`.session-checkbox`、`.del-btn`（hover 显隐）等样式；`.btn-small` 增加独立按钮基样式使其在 modal 外可用
+     - `app.js`：重构 `loadSessions` 为 `loadSessions`（fetch）+ `renderSessions`（DOM 渲染，从缓存 `lastSessions` 渲染避免切换选中时重复网络请求）；新增 `selectionMode`/`selectedIds` 状态、`toggleSelection`/`enterBatchMode`/`exitBatchMode`/`deleteSession`/`confirmBatchDelete` 函数；删除前 `confirm()` 二次确认
+  4. **附带修复**：发现并修复 `app.js` 中 `clearTerminal is not defined` 的预存 bug（tab 切换时调用未定义函数导致 `loadSessions` 不执行）——改为 `clearChat()`
+- **浏览器验证**：启动 uvicorn (port 8001)，向临时 workspace 注入 5 条种子会话；用 browser_use subagent 通过 `browser_evaluate` 覆盖 `window.confirm` 后验证：① 单个删除 5→4 条，confirm 弹出 1 次；② 批量删除选中 2 条，提示"已删除 2 个会话"；③ 控制台无错误
+- **验证**：全量 125 个测试通过（121 原有 + 4 新增 WebUI 测试），无回归
+- **涉及文件**：
+  - `the_harness/memory/store.py` — `delete_session` / `delete_sessions`（上一会话已实现）
+  - `the_harness/webui/app.py` — 新增 DELETE 和 batch-delete 端点 + 模块 docstring
+  - `the_harness/webui/static/index.html` — 批量删除 UI 元素
+  - `the_harness/webui/static/style.css` — 删除按钮、批量工具栏、复选框样式
+  - `the_harness/webui/static/app.js` — 删除交互逻辑 + 修复 clearTerminal bug
+  - `tests/test_memory_store.py` — 3 个删除测试（上一会话）
+  - `tests/test_webui.py` — 4 个删除端点测试
+- **文档更新**：同步更新 `SPEC.md`（REST API 端点表 + MemoryStore 接口）、`HANDOFF.md`（MemoryStore 接口 + 当前状态）、本文件
+- **学到的教训**：
+  - **loadSessions 与 renderSessions 分离**：将 fetch（`loadSessions`）与 DOM 渲染（`renderSessions`）拆分后，批量选择切换时只需从缓存 `lastSessions` 重新渲染，避免每次勾选都发网络请求
+  - **DELETE-with-body 不可靠**：批量删除用 `POST /api/sessions/batch-delete` 而非 `DELETE` 携带 body，因为部分 HTTP 客户端对 DELETE body 支持不一致
+  - **浏览器自动化与 confirm() 冲突**：`window.confirm()` 在无头浏览器中默认自动 dismiss（返回 false），需通过 `browser_evaluate` 覆盖为 `return true` 才能测试删除流程；这不是代码 bug 而是自动化限制
+  - **路由注册顺序**：`POST /api/sessions/batch-delete` 必须能被正确匹配——FastAPI 按方法+路径区分，与 `GET/DELETE /api/sessions/{id}` 无冲突
+  - **预存 bug 的连带影响**：`clearTerminal is not defined` 导致 tab 切换时 `loadSessions` 不执行，用户改 workspace 后无法刷新会话列表——修复后该路径恢复正常

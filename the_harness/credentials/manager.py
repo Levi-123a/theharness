@@ -1,139 +1,98 @@
-"""AES-256 encrypted credential manager with PBKDF2 key derivation."""
+"""Credential manager — stores API keys in the OS keychain via keyring.
+
+No master password, no plaintext files. Credentials are stored in the
+operating system's native credential store (Windows Credential Manager,
+macOS Keychain, Linux Secret Service).
+
+环境变量作为辅助来源：当 keyring 中没有某 provider 的记录时，
+可从 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL 等环境变量读取，
+方便用户通过 .env 文件预配置（注意 .env 为明文，仅作开发便利）。
+"""
 
 import json
 import os
-from pathlib import Path
 
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+import keyring
 
+# 环境变量名约定：<PROVIDER>_API_KEY / <PROVIDER>_BASE_URL / <PROVIDER>_MODEL
+# 目前仅 openai provider 支持环境变量回退（兼容 DeepSeek 等 OpenAI 兼容端点）
+_ENV_VAR_MAP = {
+    "openai": {
+        "api_key": "OPENAI_API_KEY",
+        "base_url": "OPENAI_BASE_URL",
+        "model": "OPENAI_MODEL",
+    },
+}
 
-# Constants
-_SALT_SIZE = 16  # bytes
-_NONCE_SIZE = 12  # bytes
-_KDF_ITERATIONS = 100_000
-_KEY_SIZE = 32  # 256 bits for AES-256
+# keyring 中存储 provider index 用的特殊 username
+_INDEX_USERNAME = "__providers__"
 
 
 class CredentialManager:
-    """Manages encrypted API keys with a master password.
+    """Manages API keys in the OS keychain via the keyring library.
 
-    Uses AES-256-GCM for encryption and PBKDF2 for key derivation.
-    The credentials file format is: salt(16) + nonce(12) + ciphertext.
-
-    Attributes:
-        _file_path: Path to the encrypted credentials file.
-        _unlocked: Whether the manager is currently unlocked.
-        _key: The derived encryption key (only set when unlocked).
-        _data: Decrypted credential store (only set when unlocked).
-            Format: {"provider_name": {"api_key": "...", "base_url": "...", "model": "..."}}
+    The keyring backend is selected automatically by the keyring library
+    based on the host operating system. No file IO is performed.
     """
 
-    def __init__(self, file_path: str) -> None:
-        """Initialize the credential manager with a file path.
+    def __init__(self, service_name: str) -> None:
+        """Initialize the credential manager.
 
         Args:
-            file_path: Path to the encrypted credentials file.
+            service_name: The keyring service name (namespace) under which
+                credentials are stored.  Different service names produce
+                isolated credential namespaces.
         """
-        self._file_path = file_path
-        self._unlocked = False
-        self._key: bytes | None = None
-        self._data: dict[str, dict[str, str]] = {}
+        self._service_name = service_name
 
-    def setup(self, master_password: str) -> None:
-        """Create a new encrypted credential store.
-
-        Args:
-            master_password: The master password for encryption.
-        """
-        salt = os.urandom(_SALT_SIZE)
-        key = self._derive_key(master_password, salt)
-        # Start with empty credentials
-        self._data = {}
-        self._write_file(salt, key, self._data)
-        self._key = key
-        self._unlocked = True
-        self._set_file_permissions()
-
-    def unlock(self, master_password: str) -> bool:
-        """Unlock the credential store with the master password.
-
-        Args:
-            master_password: The master password.
-
-        Returns:
-            True if unlock succeeded, False if the password was wrong.
-        """
-        if not Path(self._file_path).exists():
-            return False
-
-        # Clear any previous state before attempting unlock
-        self._key = None
-        self._data = {}
-        self._unlocked = False
-
-        with open(self._file_path, "rb") as f:
-            raw = f.read()
-
-        salt = raw[:_SALT_SIZE]
-        nonce = raw[_SALT_SIZE:_SALT_SIZE + _NONCE_SIZE]
-        ciphertext = raw[_SALT_SIZE + _NONCE_SIZE:]
-
-        key = self._derive_key(master_password, salt)
-        try:
-            plaintext = AESGCM(key).decrypt(nonce, ciphertext, None)
-        except Exception:
-            return False
-
-        data = json.loads(plaintext.decode("utf-8"))
-        # Backward compatibility: migrate old str format to new dict format
-        for provider, value in data.items():
-            if isinstance(value, str):
-                data[provider] = {"api_key": value, "base_url": "", "model": ""}
-        self._data = data
-        self._key = key
-        self._unlocked = True
-        return True
-
-    def lock(self) -> None:
-        """Lock the credential store, clearing the key and data from memory."""
-        self._key = None
-        self._data = {}
-        self._unlocked = False
+    # ── Public API ──────────────────────────────────────────────────
 
     def store(self, provider: str, api_key: str, base_url: str = "", model: str = "") -> None:
-        """Store or update credentials for a provider.
+        """Store or update credentials for a provider in the OS keychain.
 
         Args:
             provider: The provider name (e.g. "openai", "deepseek").
             api_key: The API key to store.
             base_url: Optional base URL for the provider API endpoint.
             model: Optional model name to use with this provider.
-
-        Raises:
-            RuntimeError: If the manager is not unlocked.
         """
-        if not self._unlocked:
-            raise RuntimeError("Credential manager is locked. Call unlock() first.")
-        self._data[provider] = {"api_key": api_key, "base_url": base_url, "model": model}
-        self._persist()
+        data = {"api_key": api_key, "base_url": base_url, "model": model}
+        keyring.set_password(
+            self._service_name,
+            f"provider:{provider}",
+            json.dumps(data, ensure_ascii=False),
+        )
+        self._add_to_index(provider)
 
     def get(self, provider: str) -> dict[str, str] | None:
         """Retrieve credentials for a provider.
+
+        查找顺序：OS keyring → 环境变量（仅 openai provider）。
 
         Args:
             provider: The provider name.
 
         Returns:
-            A dict with "api_key", "base_url", "model" keys, or None if not found.
-
-        Raises:
-            RuntimeError: If the manager is not unlocked.
+            A dict with "api_key", "base_url", "model" keys, or None if
+            the provider is not configured in either keyring or env vars.
         """
-        if not self._unlocked:
-            raise RuntimeError("Credential manager is locked. Call unlock() first.")
-        return self._data.get(provider)
+        # 1. Try OS keyring
+        raw = keyring.get_password(self._service_name, f"provider:{provider}")
+        if raw:
+            return json.loads(raw)
+
+        # 2. Fallback to environment variables for supported providers
+        env_map = _ENV_VAR_MAP.get(provider)
+        if env_map:
+            api_key = os.environ.get(env_map["api_key"], "").strip()
+            if api_key:
+                return {
+                    "api_key": api_key,
+                    "base_url": os.environ.get(env_map["base_url"], "").strip(),
+                    "model": os.environ.get(env_map["model"], "").strip(),
+                }
+
+        return None
 
     def get_api_key(self, provider: str) -> str | None:
         """Retrieve only the API key for a provider.
@@ -143,13 +102,8 @@ class CredentialManager:
 
         Returns:
             The API key string, or None if not found.
-
-        Raises:
-            RuntimeError: If the manager is not unlocked.
         """
-        if not self._unlocked:
-            raise RuntimeError("Credential manager is locked. Call unlock() first.")
-        entry = self._data.get(provider)
+        entry = self.get(provider)
         return entry.get("api_key") if entry else None
 
     def status(self) -> dict[str, dict[str, str | bool]]:
@@ -158,69 +112,75 @@ class CredentialManager:
         Returns:
             A dict mapping provider names to their status info
             (api_key: True, base_url: str, model: str).
-
-        Raises:
-            RuntimeError: If the manager is not unlocked.
         """
-        if not self._unlocked:
-            raise RuntimeError("Credential manager is locked. Call unlock() first.")
-        return {
-            provider: {
+        result: dict[str, dict[str, str | bool]] = {}
+        for provider in self._get_index():
+            raw = keyring.get_password(self._service_name, f"provider:{provider}")
+            if not raw:
+                continue
+            entry = json.loads(raw)
+            result[provider] = {
                 "api_key": True,
                 "base_url": entry.get("base_url", ""),
                 "model": entry.get("model", ""),
             }
-            for provider, entry in self._data.items()
-        }
+
+        # Include providers available via environment variables
+        for provider, env_map in _ENV_VAR_MAP.items():
+            if provider in result:
+                continue
+            api_key = os.environ.get(env_map["api_key"], "").strip()
+            if api_key:
+                result[provider] = {
+                    "api_key": True,
+                    "base_url": os.environ.get(env_map["base_url"], "").strip(),
+                    "model": os.environ.get(env_map["model"], "").strip(),
+                }
+
+        return result
 
     def delete(self, provider: str) -> None:
-        """Delete a provider's key.
+        """Delete a provider's key from the OS keychain.
 
         Args:
             provider: The provider name.
-
-        Raises:
-            RuntimeError: If the manager is not unlocked.
         """
-        if not self._unlocked:
-            raise RuntimeError("Credential manager is locked. Call unlock() first.")
-        self._data.pop(provider, None)
-        self._persist()
-
-    # ── Private helpers ────────────────────────────────────────────
-
-    def _derive_key(self, password: str, salt: bytes) -> bytes:
-        """Derive a 256-bit key from password and salt using PBKDF2."""
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=_KEY_SIZE,
-            salt=salt,
-            iterations=_KDF_ITERATIONS,
-        )
-        return kdf.derive(password.encode("utf-8"))
-
-    def _write_file(self, salt: bytes, key: bytes, data: dict[str, dict[str, str]]) -> None:
-        """Write encrypted credentials to file: salt + nonce + ciphertext."""
-        nonce = os.urandom(_NONCE_SIZE)
-        plaintext = json.dumps(data).encode("utf-8")
-        ciphertext = AESGCM(key).encrypt(nonce, plaintext, None)
-        with open(self._file_path, "wb") as f:
-            f.write(salt + nonce + ciphertext)
-
-    def _persist(self) -> None:
-        """Re-encrypt and write the current data to file."""
-        if self._key is None:
-            raise RuntimeError("Cannot persist: no encryption key available.")
-        # Read existing salt from file
-        with open(self._file_path, "rb") as f:
-            raw = f.read()
-        salt = raw[:_SALT_SIZE]
-        self._write_file(salt, self._key, self._data)
-
-    def _set_file_permissions(self) -> None:
-        """Set file permissions to 600 (owner read/write only)."""
         try:
-            os.chmod(self._file_path, 0o600)
-        except OSError:
-            # On Windows, chmod may not fully work; ignore
+            keyring.delete_password(self._service_name, f"provider:{provider}")
+        except keyring.errors.PasswordDeleteError:
             pass
+        self._remove_from_index(provider)
+
+    # ── Private helpers: provider index ─────────────────────────────
+
+    def _get_index(self) -> list[str]:
+        """Read the provider index from the keyring."""
+        raw = keyring.get_password(self._service_name, _INDEX_USERNAME)
+        if not raw:
+            return []
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+
+    def _add_to_index(self, provider: str) -> None:
+        """Add a provider to the index (idempotent)."""
+        providers = self._get_index()
+        if provider not in providers:
+            providers.append(provider)
+            keyring.set_password(
+                self._service_name,
+                _INDEX_USERNAME,
+                json.dumps(providers, ensure_ascii=False),
+            )
+
+    def _remove_from_index(self, provider: str) -> None:
+        """Remove a provider from the index."""
+        providers = self._get_index()
+        if provider in providers:
+            providers.remove(provider)
+            keyring.set_password(
+                self._service_name,
+                _INDEX_USERNAME,
+                json.dumps(providers, ensure_ascii=False),
+            )

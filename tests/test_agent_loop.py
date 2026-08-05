@@ -58,6 +58,92 @@ def test_success_in_2_rounds(tmp_path):
     assert result.rounds == 2
 
 
+def test_session_summary_generated_and_saved(tmp_path):
+    """AgentLoop should generate an AI summary and store it in the session.
+
+    The summary is displayed in the sidebar session list so users can
+    tell sessions apart at a glance, instead of seeing just '#5'.
+    """
+    actions = [
+        {"action": "write_file", "params": {"file_path": "a.py", "content": "x=1"}, "reasoning": "创建初始文件"},
+        {"action": "write_file", "params": {"file_path": "b.py", "content": "y=2"}, "reasoning": "修复变量赋值"},
+    ]
+    results = [
+        TestResult(exit_code=1, stdout="1 failed", stderr="err", passed=False),
+        TestResult(exit_code=0, stdout="1 passed", stderr="", passed=True),
+    ]
+    loop = _make_loop(tmp_path, actions, results)
+    loop.run(Task(test_path="tests/test_foo.py", workspace=str(tmp_path)))
+
+    sessions = loop._memory.get_sessions()
+    assert len(sessions) == 1
+    assert sessions[0]["summary"] != ""
+    # The mock provider's summarize_session uses the last action's reasoning
+    assert "修复变量赋值" in sessions[0]["summary"]
+
+
+def test_freeform_saves_description_and_final_reply(tmp_path):
+    """run_freeform() should save the user's description and AI's final reply.
+
+    Bug: when the LLM returns 'done', its reasoning (the AI's actual reply
+    text) was NOT saved — only actions that were *executed* get saved.
+    So freeform sessions with immediate 'done' had empty actions and no
+    AI reply text, making the session detail page show nothing useful.
+    """
+    actions = [
+        {"action": "done", "params": {}, "reasoning": "这是一个Python测试代理项目，用于自动修复失败的测试用例。"},
+    ]
+    loop = _make_loop(tmp_path, actions, [])
+    task = Task(
+        test_path="",
+        workspace=str(tmp_path),
+        description="请读取 README.md 并总结项目用途",
+    )
+    loop.run_freeform(task)
+
+    sessions = loop._memory.get_sessions()
+    assert len(sessions) == 1
+    # User's original message must be saved
+    assert sessions[0]["description"] == "请读取 README.md 并总结项目用途"
+    # AI's final reply text must be saved
+    assert sessions[0]["final_reply"] == "这是一个Python测试代理项目，用于自动修复失败的测试用例。"
+
+    # get_session (detail view) must also include these
+    detail = loop._memory.get_session(sessions[0]["id"])
+    assert detail["description"] == "请读取 README.md 并总结项目用途"
+    assert detail["final_reply"] == "这是一个Python测试代理项目，用于自动修复失败的测试用例。"
+
+
+def test_freeform_with_history_continues_conversation(tmp_path):
+    """run_freeform() should include conversation history in LLM context.
+
+    When the user sends a follow-up message, the previous Q&A pairs are
+    passed as 'history' so the LLM has conversation context.
+    """
+    # The mock provider records the messages it receives
+    actions = [
+        {"action": "done", "params": {}, "reasoning": "好的，我知道了。"},
+    ]
+    loop = _make_loop(tmp_path, actions, [])
+
+    history = [
+        {"role": "user", "content": "项目用什么语言？"},
+        {"role": "assistant", "content": "项目使用 Python。"},
+    ]
+    task = Task(
+        test_path="",
+        workspace=str(tmp_path),
+        description="那它的测试框架是什么？",
+    )
+    loop.run_freeform(task, history=history)
+
+    # Verify the session was saved with the user's follow-up question
+    sessions = loop._memory.get_sessions()
+    assert len(sessions) == 1
+    assert sessions[0]["description"] == "那它的测试框架是什么？"
+    assert sessions[0]["final_reply"] == "好的，我知道了。"
+
+
 def test_give_up(tmp_path):
     """Agent stops when LLM returns give_up action."""
     actions = [{"action": "give_up", "params": {}, "reasoning": "can't fix"}]

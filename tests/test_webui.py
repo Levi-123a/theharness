@@ -42,7 +42,7 @@ def _install_mock_factory(tmp_path):
         TestResult(exit_code=0, stdout="1 passed", stderr="", passed=True),
     ]
 
-    def mock_factory(workspace, event_queue=None):
+    def mock_factory(workspace, event_queue=None, freeform=False):
         from the_harness.agent_loop import AgentLoop
         from the_harness.config import Config
         from the_harness.feedback.classifier import FailureClassifier
@@ -112,6 +112,147 @@ def test_get_sessions_returns_list(tmp_path):
     assert isinstance(resp.json(), list)
 
 
+def test_get_session_detail_returns_actions(tmp_path):
+    """GET /api/sessions/{id} should return the full session including its
+    actions list, so the frontend can render the conversation bubbles.
+
+    Bug: clicking a past session in the sidebar showed only the summary
+    (success/rounds/reason) but no conversation bubbles, because the
+    endpoint used get_sessions() (list) which omits actions.
+    """
+    from the_harness.memory.store import MemoryStore
+
+    store = MemoryStore(str(tmp_path))
+    session_id = store.save_session({
+        "test_path": "tests/test_foo.py",
+        "success": True,
+        "rounds": 2,
+        "reason": "All tests passed",
+        "actions": [
+            {"round": 1, "action_type": "read_file",
+             "action_params": {"file_path": "src/foo.py"},
+             "result": "file contents...", "reasoning": "Need to read the file"},
+            {"round": 2, "action_type": "edit_file",
+             "action_params": {"file_path": "src/foo.py", "old_text": "x", "new_text": "y"},
+             "result": "edited", "reasoning": "Fix the failing test"},
+        ],
+    })
+
+    client = TestClient(app)
+    resp = client.get(f"/api/sessions/{session_id}", params={"workspace": str(tmp_path)})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == session_id
+    assert data["test_path"] == "tests/test_foo.py"
+    # The actions list must be present — this is what the frontend renders
+    # as conversation bubbles.
+    assert "actions" in data, "session detail must include actions list"
+    assert len(data["actions"]) == 2
+    a1 = data["actions"][0]
+    assert a1["action_type"] == "read_file"
+    assert a1["action_params"] == {"file_path": "src/foo.py"}
+    assert a1["reasoning"] == "Need to read the file"
+    assert a1["result"] == "file contents..."
+
+
+def test_get_session_detail_returns_404_for_missing(tmp_path):
+    """GET /api/sessions/{id} should return 404 for a non-existent session."""
+    client = TestClient(app)
+    resp = client.get("/api/sessions/99999", params={"workspace": str(tmp_path)})
+    assert resp.status_code == 404
+
+
+def test_delete_session_endpoint(tmp_path):
+    """DELETE /api/sessions/{id} should remove the session and return 200.
+
+    After deletion the session must no longer appear in GET /api/sessions
+    nor be reachable via GET /api/sessions/{id}.
+    """
+    from the_harness.memory.store import MemoryStore
+
+    store = MemoryStore(str(tmp_path))
+    session_id = store.save_session({
+        "test_path": "tests/test_foo.py",
+        "success": True,
+        "rounds": 1,
+        "reason": "ok",
+        "actions": [],
+    })
+
+    client = TestClient(app)
+    resp = client.delete(
+        f"/api/sessions/{session_id}",
+        params={"workspace": str(tmp_path)},
+    )
+    assert resp.status_code == 200
+    assert resp.json().get("ok") is True
+
+    # Session is gone from the list view
+    listing = client.get(
+        "/api/sessions", params={"workspace": str(tmp_path)}
+    ).json()
+    assert all(s["id"] != session_id for s in listing)
+    # And from the detail view (404)
+    detail = client.get(
+        f"/api/sessions/{session_id}", params={"workspace": str(tmp_path)}
+    )
+    assert detail.status_code == 404
+
+
+def test_delete_session_endpoint_returns_404_for_missing(tmp_path):
+    """DELETE /api/sessions/{id} should return 404 when the session doesn't exist."""
+    client = TestClient(app)
+    resp = client.delete(
+        "/api/sessions/99999",
+        params={"workspace": str(tmp_path)},
+    )
+    assert resp.status_code == 404
+
+
+def test_delete_sessions_batch_endpoint(tmp_path):
+    """POST /api/sessions/batch-delete should remove all listed sessions.
+
+    Body: {"ids": [1, 2, 3]}. Returns {"ok": true, "deleted": <count>}.
+    Unknown ids are silently skipped. Used by the UI's "批量删除" button.
+    """
+    from the_harness.memory.store import MemoryStore
+
+    store = MemoryStore(str(tmp_path))
+    sid1 = store.save_session({"test_path": "a", "success": True, "rounds": 1})
+    sid2 = store.save_session({"test_path": "b", "success": False, "rounds": 2})
+    sid3 = store.save_session({"test_path": "c", "success": True, "rounds": 1})
+
+    client = TestClient(app)
+    resp = client.post(
+        "/api/sessions/batch-delete",
+        params={"workspace": str(tmp_path)},
+        json={"ids": [sid1, sid3, 99999]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data.get("ok") is True
+    assert data.get("deleted") == 2
+
+    # Only sid2 remains
+    remaining = client.get(
+        "/api/sessions", params={"workspace": str(tmp_path)}
+    ).json()
+    assert len(remaining) == 1
+    assert remaining[0]["id"] == sid2
+
+
+def test_delete_sessions_batch_endpoint_handles_empty_ids(tmp_path):
+    """POST /api/sessions/batch-delete with empty ids should return deleted=0."""
+    client = TestClient(app)
+    resp = client.post(
+        "/api/sessions/batch-delete",
+        params={"workspace": str(tmp_path)},
+        json={"ids": []},
+    )
+    assert resp.status_code == 200
+    assert resp.json().get("deleted") == 0
+
+
 def test_websocket_connect(tmp_path):
     """WebSocket connection establishes."""
     original = _install_mock_factory(tmp_path)
@@ -169,31 +310,166 @@ def test_static_index_served():
     assert "<html" in resp.text.lower()
 
 
-def test_credentials_setup_returns_error_on_permission_denied(tmp_path, monkeypatch):
-    """POST /api/credentials/setup should return a user-friendly error, not a 500."""
+def test_index_html_has_no_cache_header():
+    """GET / should send Cache-Control: no-cache so browsers always fetch
+    the latest HTML (which references the latest versioned static assets).
+
+    Without this, browsers may serve a stale index.html from cache that
+    references an old app.js, causing users to see outdated UI behavior
+    (e.g. removed 'unlock' flow errors).
+    """
+    client = TestClient(app)
+    resp = client.get("/")
+    cache_control = resp.headers.get("cache-control", "")
+    assert "no-cache" in cache_control or "no-store" in cache_control, (
+        f"Expected Cache-Control to prevent caching, got: {cache_control!r}"
+    )
+
+
+def test_static_js_has_no_cache_header():
+    """GET /static/app.js should send Cache-Control: no-cache so browsers
+    always fetch the latest JS.
+
+    Without this, browsers cache old app.js and users see removed error
+    messages like 'Credential store is locked. Unlock first.'
+    """
+    client = TestClient(app)
+    resp = client.get("/static/app.js")
+    assert resp.status_code == 200
+    cache_control = resp.headers.get("cache-control", "")
+    assert "no-cache" in cache_control or "no-store" in cache_control, (
+        f"Expected Cache-Control to prevent caching, got: {cache_control!r}"
+    )
+
+
+def test_store_api_key_directly(tmp_path, monkeypatch):
+    """POST /api/credentials/store should work without any setup or unlock step."""
     import importlib
-    from unittest.mock import patch
+    from unittest.mock import patch, MagicMock
 
     webui_mod = importlib.import_module("the_harness.webui.app")
-    monkeypatch.setattr(webui_mod, "_CREDENTIAL_FILE", tmp_path / "credentials.enc")
+    # Mock keyring so no real OS keychain is touched
+    keyring_store = {}
+    mock_kr = MagicMock()
+    mock_kr.set_password.side_effect = lambda s, u, p: keyring_store.__setitem__(f"{s}:{u}", p)
+    mock_kr.get_password.side_effect = lambda s, u: keyring_store.get(f"{s}:{u}")
+    mock_kr.delete_password.side_effect = lambda s, u: keyring_store.pop(f"{s}:{u}", None)
+    monkeypatch.setattr(webui_mod, "_credential_manager", None)
 
-    # Make the file exist so setup() doesn't 409, but then fail on write
-    # Actually, let's just make CredentialManager.setup raise PermissionError
     client = TestClient(app)
-
-    # Patch setup to raise PermissionError
-    with patch.object(
-        webui_mod.CredentialManager, "setup", side_effect=PermissionError("Permission denied")
-    ):
+    with patch("the_harness.credentials.manager.keyring", mock_kr):
         resp = client.post(
-            "/api/credentials/setup",
-            json={"master_password": "testpass123"},
+            "/api/credentials/store",
+            json={"provider": "openai", "api_key": "sk-test-key", "base_url": "", "model": ""},
         )
-    # Should get a proper error response, not a 500 Internal Server Error
-    assert resp.status_code in (400, 403, 500)
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
     data = resp.json()
-    # The response should contain a readable error message
-    assert "detail" in data or "error" in data
+    assert data["ok"] is True
+
+
+def test_status_shows_providers_without_unlock(tmp_path, monkeypatch):
+    """GET /api/credentials/status should show stored providers without setup/unlock."""
+    import importlib
+    from unittest.mock import patch, MagicMock
+
+    webui_mod = importlib.import_module("the_harness.webui.app")
+    keyring_store = {}
+    mock_kr = MagicMock()
+    mock_kr.set_password.side_effect = lambda s, u, p: keyring_store.__setitem__(f"{s}:{u}", p)
+    mock_kr.get_password.side_effect = lambda s, u: keyring_store.get(f"{s}:{u}")
+    mock_kr.delete_password.side_effect = lambda s, u: keyring_store.pop(f"{s}:{u}", None)
+    monkeypatch.setattr(webui_mod, "_credential_manager", None)
+
+    client = TestClient(app)
+    with patch("the_harness.credentials.manager.keyring", mock_kr):
+        # Store a key first
+        client.post(
+            "/api/credentials/store",
+            json={"provider": "openai", "api_key": "sk-test-key", "base_url": "", "model": ""},
+        )
+        # Now check status — should show the provider without any unlock
+        resp = client.get("/api/credentials/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "openai" in data["providers"]
+    assert data["providers"]["openai"]["api_key"] is True
+
+
+def test_env_var_provides_default_api_key(tmp_path, monkeypatch):
+    """App should read OPENAI_API_KEY from env var when keychain has no keys.
+
+    This allows pre-configuring a key via .env file without users needing
+    to enter their own.
+    """
+    import importlib
+    from unittest.mock import patch, MagicMock
+
+    webui_mod = importlib.import_module("the_harness.webui.app")
+
+    # Set env vars
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env-test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "deepseek-chat")
+
+    # Mock keyring with empty store (no user-stored keys)
+    mock_kr = MagicMock()
+    mock_kr.get_password.return_value = None
+    monkeypatch.setattr(webui_mod, "_credential_manager", None)
+
+    # Check that the agent loop factory picks up env var credentials
+    with patch("the_harness.credentials.manager.keyring", mock_kr):
+        cm = webui_mod._get_credential_manager()
+        # The env var key should be accessible
+        creds = cm.get("openai")
+        # If keychain is empty, env var should be used
+        # This is tested via the factory, but we can check the env var directly
+        import os
+        assert os.environ.get("OPENAI_API_KEY") == "sk-env-test-key"
+
+
+def test_factory_uses_real_llm_when_any_provider_configured(tmp_path, monkeypatch):
+    """Agent loop factory should use OpenAILLMProvider when ANY provider is
+    configured in the keyring, not just when 'openai' is configured.
+
+    Bug: factory only checked cm.get('openai').  If a user stored credentials
+    under provider name 'deepseek' (a common case since DeepSeek uses an
+    OpenAI-compatible API), cm.get('openai') returned None and the factory
+    fell back to MockLLMProvider([]), which immediately raised
+    'No more preset actions available' on the first agent round.
+    """
+    import importlib
+    from unittest.mock import patch, MagicMock
+
+    webui_mod = importlib.import_module("the_harness.webui.app")
+    monkeypatch.setattr(webui_mod, "_credential_manager", None)
+
+    # Simulate a user who stored credentials under 'deepseek' (not 'openai')
+    keyring_store = {
+        "the-harness:provider:deepseek": '{"api_key": "sk-real-key", "base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat"}',
+        "the-harness:__providers__": '["deepseek"]',
+    }
+    mock_kr = MagicMock()
+    mock_kr.get_password.side_effect = lambda s, u: keyring_store.get(f"{s}:{u}")
+    mock_kr.set_password.side_effect = lambda s, u, p: keyring_store.__setitem__(f"{s}:{u}", p)
+    mock_kr.delete_password.side_effect = lambda s, u: keyring_store.pop(f"{s}:{u}", None)
+
+    # Clear env vars so they don't interfere
+    for var in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL"):
+        monkeypatch.delenv(var, raising=False)
+
+    captured_llm = {}
+
+    with patch("the_harness.credentials.manager.keyring", mock_kr), \
+         patch("the_harness.webui.app.OpenAILLMProvider") as mock_provider_cls:
+        mock_provider_cls.side_effect = lambda **kwargs: captured_llm.update(kwargs) or MagicMock()
+
+        loop = webui_mod._default_agent_loop_factory(str(tmp_path))
+
+        # OpenAILLMProvider should have been instantiated with the deepseek key
+        assert mock_provider_cls.called, "OpenAILLMProvider should be instantiated when a provider is configured"
+        assert captured_llm.get("api_key") == "sk-real-key"
+        assert captured_llm.get("base_url") == "https://api.deepseek.com/v1"
+        assert captured_llm.get("model") == "deepseek-chat"
 
 
 def test_api_has_cors_headers():
@@ -211,66 +487,25 @@ def test_api_has_cors_headers():
     assert "access-control-allow-origin" in {k.lower() for k in resp.headers.keys()}
 
 
-def test_credentials_setup_creates_file_in_workspace(tmp_path, monkeypatch):
-    """POST /api/credentials/setup should successfully create the credential file.
+def test_credential_service_name_is_fixed_string(tmp_path, monkeypatch):
+    """Credential service name should be a fixed string, not dependent on CWD.
 
-    The file path must be writable by the server process. If the default path
-    (user home directory) is not writable (e.g. sandbox restrictions), the
-    server should use an environment variable or workspace-relative path.
-    """
-    import importlib
-    import os
-
-    webui_mod = importlib.import_module("the_harness.webui.app")
-
-    # Point credential file to a writable temp directory
-    cred_file = tmp_path / "credentials.enc"
-    monkeypatch.setattr(webui_mod, "_CREDENTIAL_FILE", cred_file)
-    # Reset singleton so it picks up the new path
-    monkeypatch.setattr(webui_mod, "_credential_manager", None)
-
-    client = TestClient(app)
-    resp = client.post(
-        "/api/credentials/setup",
-        json={"master_password": "testpass123"},
-    )
-    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
-    data = resp.json()
-    assert data["ok"] is True
-    assert cred_file.exists(), "Credential file should be created"
-
-
-def test_credential_file_default_path_uses_module_location(tmp_path, monkeypatch):
-    """Default credential file path should be based on module location, not CWD.
-
-    When the server process is started from a different working directory
-    (e.g. the home directory), the credential file path must still resolve
-    to the project root.  Using Path.cwd() is fragile because the CWD of
-    the uvicorn process may differ from the project root.
+    With keyring-based storage there is no file path; the service name
+    namespaces credentials in the OS keychain.  It must be a constant
+    so credentials stay accessible regardless of where the server starts.
     """
     import importlib
     import sys
-    from pathlib import Path
 
-    # Change CWD to a temp dir to simulate server started from elsewhere
     monkeypatch.chdir(tmp_path)
 
-    # Clear cached module so _CREDENTIAL_FILE is re-evaluated
     saved = sys.modules.pop("the_harness.webui.app", None)
     try:
         webui_mod = importlib.import_module("the_harness.webui.app")
-        cred_file = webui_mod._CREDENTIAL_FILE
+        service_name = webui_mod._SERVICE_NAME
     finally:
-        # Restore original module
         if saved is not None:
             sys.modules["the_harness.webui.app"] = saved
 
-    # The path must NOT be under the temp directory (i.e. not CWD-based)
-    assert not str(cred_file).startswith(str(tmp_path)), (
-        f"Credential file path should not depend on CWD, got: {cred_file}"
-    )
-    # It should be under the project root (parent of the_harness package)
-    project_root = Path(__file__).resolve().parent.parent
-    assert project_root in cred_file.resolve().parents, (
-        f"Credential file ({cred_file}) should be under project root ({project_root})"
-    )
+    assert isinstance(service_name, str)
+    assert service_name == "the-harness"

@@ -22,3 +22,33 @@ class LLMProvider(ABC):
             A dict with keys "action", "params", and "reasoning".
         """
         ...
+
+    def summarize_session(
+        self,
+        task_desc: str,
+        action_summaries: list[str],
+        success: bool,
+        reason: str,
+    ) -> str:
+        """Generate a short one-line summary of the session.
+
+        The summary is displayed in the sidebar session list so users can
+        tell sessions apart at a glance, instead of seeing just '#5'.
+
+        The base implementation derives a summary from the inputs without
+        calling the LLM.  Subclasses (e.g. OpenAILLMProvider) override
+        this to call the LLM for a more intelligent summary.
+
+        Args:
+            task_desc: The task description (test_path or user instruction).
+            action_summaries: List of per-action reasoning strings.
+            success: Whether the session succeeded.
+            reason: The exit reason string.
+
+        Returns:
+            A short summary string.
+        """
+        outcome = "成功" if success else "失败"
+        if action_summaries:
+            return f"{action_summaries[-1]}（{outcome}）"
+        return f"{task_desc} — {reason}" if task_desc else reason

@@ -46,3 +46,20 @@ class MockLLMProvider(LLMProvider):
     def reset(self) -> None:
         """Reset the provider to return actions from the beginning."""
         self._index = 0
+
+    def summarize_session(
+        self,
+        task_desc: str,
+        action_summaries: list[str],
+        success: bool,
+        reason: str,
+    ) -> str:
+        """Return a deterministic summary without consuming preset actions.
+
+        Does NOT call complete() — that would eat a preset action and
+        break the agent loop's expectations.
+        """
+        outcome = "成功" if success else "失败"
+        if action_summaries:
+            return f"{action_summaries[-1]}（{outcome}）"
+        return f"{task_desc} — {reason}" if task_desc else reason

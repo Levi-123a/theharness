@@ -132,3 +132,47 @@ class OpenAILLMProvider(LLMProvider):
             "params": parsed.get("params", {}),
             "reasoning": parsed.get("reasoning", ""),
         }
+
+    def summarize_session(
+        self,
+        task_desc: str,
+        action_summaries: list[str],
+        success: bool,
+        reason: str,
+    ) -> str:
+        """Call the LLM to generate a one-line session summary.
+
+        Makes a direct API call (not via complete()) so it doesn't
+        interfere with the action-response protocol.  Falls back to
+        the base implementation on any error.
+        """
+        if not self._api_key:
+            return super().summarize_session(task_desc, action_summaries, success, reason)
+        try:
+            from openai import OpenAI
+        except ImportError:
+            return super().summarize_session(task_desc, action_summaries, success, reason)
+
+        actions_text = "; ".join(action_summaries[-5:]) if action_summaries else "(无操作)"
+        outcome = "成功" if success else "失败"
+        prompt = (
+            f"请用一句简短的话（不超过30个字）总结这个编码会话做了什么。\n"
+            f"任务: {task_desc}\n"
+            f"操作: {actions_text}\n"
+            f"结果: {outcome} — {reason}\n"
+            f"只返回总结文本，不要加引号或其他内容。"
+        )
+        try:
+            client = OpenAI(api_key=self._api_key, base_url=self._base_url)
+            resp = client.chat.completions.create(
+                model=self._model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+                max_tokens=60,
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            return text if text else super().summarize_session(
+                task_desc, action_summaries, success, reason
+            )
+        except Exception:
+            return super().summarize_session(task_desc, action_summaries, success, reason)
