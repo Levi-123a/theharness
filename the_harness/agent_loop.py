@@ -228,7 +228,10 @@ class AgentLoop:
                 # Include the done action in history so each Q&A exchange
                 # has at least one action record (visible in session detail).
                 action_history.append(action)
-                action_results.append(action.reasoning or "")
+                # done has no execution output — reasoning is saved separately
+                # as final_reply. Storing it as result too causes duplicate
+                # display in the frontend (headline + detail).
+                action_results.append("")
                 sid = self._save_session(
                     task, True, round_num + 1, "Task completed",
                     action_history, action_results=action_results,
@@ -243,7 +246,7 @@ class AgentLoop:
                 )
             if action.type == ActionType.GIVE_UP:
                 action_history.append(action)
-                action_results.append(action.reasoning or "")
+                action_results.append("")  # give_up has no execution output
                 sid = self._save_session(
                     task, False, round_num + 1, "LLM gave up",
                     action_history, action_results=action_results,

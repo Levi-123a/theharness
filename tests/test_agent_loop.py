@@ -349,3 +349,70 @@ def test_freeform_with_session_id_appends_to_existing(tmp_path):
     assert len(detail["actions"]) == 2
     # final_reply should be updated to the latest
     assert detail["final_reply"] == "第二个回答"
+
+
+# ── Bug5: done action 的 result 不应重复 reasoning ────────────────
+
+
+def test_freeform_done_action_result_not_duplicate_reasoning(tmp_path):
+    """done action 的 result 字段不应等于 reasoning。
+
+    Bug: run_freeform 中 done action 的 action_results 存了 action.reasoning，
+    导致 _save_session 中 result = reasoning。前端 loadSessionDetail 同时显示
+    headline（reasoning）和 detail（result），造成回复在大框和小框各显示一次。
+
+    Fix: done/give_up action 的 result 应为空或简短状态，不应等于 reasoning。
+    """
+    actions = [
+        {"action": "done", "params": {}, "reasoning": "你好！我是编程助手。"},
+    ]
+    loop = _make_loop(tmp_path, actions, [])
+    task = Task(test_path="", workspace=str(tmp_path), description="介绍自己")
+    loop.run_freeform(task)
+
+    sessions = loop._memory.get_sessions()
+    detail = loop._memory.get_session(sessions[0]["id"])
+    done_action = detail["actions"][0]
+    # result should NOT duplicate reasoning
+    assert done_action["reasoning"] == "你好！我是编程助手。"
+    assert done_action["result"] != done_action["reasoning"], (
+        f"result should not duplicate reasoning, got result={done_action['result']!r}"
+    )
+
+
+# ── Bug6: 会话详情应返回 query_index 以正确交替显示问答 ──────────
+
+
+def test_get_session_returns_query_index_for_interleaving(tmp_path):
+    """get_session 应返回每个 action 的 query_index，使前端能按提问顺序交替显示。
+
+    Bug: description 存所有提问（Q1\\nQ2\\nQ3），actions 按全局 round 编号。
+    loadSessionDetail 先渲染所有用户消息再渲染所有 actions，导致语序变成
+    Q1 Q2 Q3 A1 A2 A3 而非正确的 Q1 A1 Q2 A2 Q3 A3。
+
+    Fix: actions 表新增 query_index 列，第一次提问的 actions query_index=0，
+    追加提问的 actions query_index 递增。前端据此交替渲染。
+    """
+    # First question creates a session
+    actions1 = [{"action": "done", "params": {}, "reasoning": "第一个回答"}]
+    loop1 = _make_loop(tmp_path, actions1, [])
+    task1 = Task(test_path="", workspace=str(tmp_path), description="第一个问题")
+    loop1.run_freeform(task1)
+
+    sessions = loop1._memory.get_sessions()
+    session_id = sessions[0]["id"]
+
+    # Second question appends to the same session
+    actions2 = [{"action": "done", "params": {}, "reasoning": "第二个回答"}]
+    loop2 = _make_loop(tmp_path, actions2, [])
+    task2 = Task(test_path="", workspace=str(tmp_path), description="第二个问题")
+    loop2.run_freeform(task2, session_id=session_id)
+
+    detail = loop2._memory.get_session(session_id)
+    assert len(detail["actions"]) == 2
+    # Each action must have a query_index field
+    assert "query_index" in detail["actions"][0], "actions must have query_index field"
+    # First query's actions should have query_index = 0
+    assert detail["actions"][0]["query_index"] == 0
+    # Second query's actions should have query_index = 1
+    assert detail["actions"][1]["query_index"] == 1

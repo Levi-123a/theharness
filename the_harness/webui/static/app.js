@@ -394,40 +394,50 @@ async function loadSessionDetail(id, workspace) {
         clearChat();
         // 设置当前 DB 会话 ID，使后续提问追加到同一会话
         currentDbSessionId = data.id;
-        // 显示用户消息（freeform 用 description，fix 模式用 test_path）
-        // description 可能包含多行（续接对话时追加的问题）
-        const userMsg = data.description || data.test_path || '';
-        if (userMsg) {
-            const lines = userMsg.split('\n').filter(l => l.trim());
-            for (const line of lines) {
-                addUserBubble(line, `会话 #${data.id}`);
-            }
-        } else {
-            addAgentBubble(`目标: 无`, 'info', null, `会话 #${data.id}`);
-        }
 
+        // 按 query_index 交替渲染用户消息和 AI 回复
+        // description 以换行分隔存储所有提问，actions 的 query_index 标识属于哪次提问
+        const questions = (data.description || data.test_path || '').split('\n').filter(l => l.trim());
         const actions = data.actions || [];
 
-        // 渲染所有 actions，每个 action 独立一个气泡
-        // 这样多轮任务的所有中间步骤都可见
+        // 按 query_index 分组 actions
+        const actionsByQuery = {};
         for (const a of actions) {
-            const reply = createReplyBubble();
-            const params = a.action_params || {};
-            const paramsStr = Object.keys(params).length ? JSON.stringify(params) : '';
-            reply.setMeta(a.action_type + (paramsStr ? ' ' + paramsStr : '') + ` · 第${a.round}轮`);
-            const headline = a.reasoning || a.action_type || '';
-            reply.setHeadline(headline, 'action');
-            if (a.result) {
-                reply.appendDetail('执行结果', a.result);
+            const qi = a.query_index || 0;
+            if (!actionsByQuery[qi]) actionsByQuery[qi] = [];
+            actionsByQuery[qi].push(a);
+        }
+
+        const maxQueryIndex = actions.length > 0
+            ? Math.max(...actions.map(a => a.query_index || 0))
+            : -1;
+        const totalQueries = Math.max(questions.length, maxQueryIndex + 1);
+
+        // 交替渲染：问题 → 该问题的 actions → 下一个问题 → ...
+        for (let qi = 0; qi < totalQueries; qi++) {
+            // 渲染用户提问（如果有对应的）
+            if (qi < questions.length) {
+                addUserBubble(questions[qi], `会话 #${data.id}`);
+            }
+            // 渲染该提问对应的所有 actions
+            const queryActions = actionsByQuery[qi] || [];
+            for (const a of queryActions) {
+                const reply = createReplyBubble();
+                const params = a.action_params || {};
+                const paramsStr = Object.keys(params).length ? JSON.stringify(params) : '';
+                reply.setMeta(a.action_type + (paramsStr ? ' ' + paramsStr : '') + ` · 第${a.round}轮`);
+                const headline = a.reasoning || a.action_type || '';
+                reply.setHeadline(headline, 'action');
+                // Bug fix: result 等于 reasoning 时不显示 detail（避免重复）
+                if (a.result && a.result !== a.reasoning) {
+                    reply.appendDetail('执行结果', a.result);
+                }
             }
         }
 
-        // 显示 AI 最终回复文本（如果与最后一个 action 的 reasoning 不同）
-        const lastAction = actions.length > 0 ? actions[actions.length - 1] : null;
-        const lastReasoning = lastAction ? (lastAction.reasoning || '') : '';
-        if (data.final_reply && data.final_reply !== lastReasoning) {
-            const reply = createReplyBubble();
-            reply.setHeadline(data.final_reply, data.success ? 'result' : 'error');
+        // 如果没有 questions 也没有 actions，显示一个占位消息
+        if (totalQueries === 0) {
+            addAgentBubble(`目标: 无`, 'info', null, `会话 #${data.id}`);
         }
 
         // 失败原因作为独立通知显示（不覆盖 action 内容）
@@ -590,6 +600,10 @@ function connectWebSocket(mode, sessionId, userMessage) {
                 }
                 if (reason) pendingReplyText = reason;
             }
+            // Bug fix: 立即重新启用发送按钮，不依赖 onclose 事件
+            // （onclose 可能在某些浏览器/环境下延迟触发）
+            startBtn.disabled = false;
+            instructBtn.disabled = false;
         } else if (msg.type === 'error') {
             ensureReply().setHeadline(msg.data.message, 'error');
         }

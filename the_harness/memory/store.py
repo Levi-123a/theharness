@@ -65,6 +65,10 @@ class MemoryStore:
             cols = {row[1] for row in conn.execute("PRAGMA table_info(actions)").fetchall()}
             if "reasoning" not in cols:
                 conn.execute("ALTER TABLE actions ADD COLUMN reasoning TEXT")
+            # query_index tracks which question each action belongs to,
+            # enabling correct Q&A interleaving in the session detail view.
+            if "query_index" not in cols:
+                conn.execute("ALTER TABLE actions ADD COLUMN query_index INTEGER DEFAULT 0")
             # Add summary column to existing sessions tables (added in a
             # later version). Same introspect-first pattern.
             session_cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
@@ -136,7 +140,7 @@ class MemoryStore:
             session_id = cur.lastrowid
             for action in session_data.get("actions", []):
                 conn.execute(
-                    "INSERT INTO actions (session_id, round, action_type, action_params, result, reasoning) VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO actions (session_id, round, action_type, action_params, result, reasoning, query_index) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
                         session_id,
                         action.get("round", 0),
@@ -144,6 +148,7 @@ class MemoryStore:
                         json.dumps(action.get("action_params", {})),
                         action.get("result", ""),
                         action.get("reasoning", ""),
+                        0,
                     ),
                 )
             conn.commit()
@@ -216,6 +221,7 @@ class MemoryStore:
                     "action_params": json.loads(a["action_params"] or "{}"),
                     "result": a["result"],
                     "reasoning": a["reasoning"],
+                    "query_index": a["query_index"],
                 }
                 for a in action_rows
             ]
@@ -289,10 +295,18 @@ class MemoryStore:
             ).fetchone()
             max_round = row[0] if row[0] else 0
 
+            # Get current max query_index to continue numbering (each
+            # follow-up question increments query_index so the frontend
+            # can interleave Q&A pairs in the correct order).
+            qi_row = conn.execute(
+                "SELECT MAX(query_index) FROM actions WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            next_query_index = (qi_row[0] if qi_row[0] is not None else 0) + 1
+
             # Insert new actions with continuing round numbers
             for i, action in enumerate(session_data.get("actions", [])):
                 conn.execute(
-                    "INSERT INTO actions (session_id, round, action_type, action_params, result, reasoning) VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO actions (session_id, round, action_type, action_params, result, reasoning, query_index) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
                         session_id,
                         max_round + i + 1,
@@ -300,6 +314,7 @@ class MemoryStore:
                         json.dumps(action.get("action_params", {})),
                         action.get("result", ""),
                         action.get("reasoning", ""),
+                        next_query_index,
                     ),
                 )
 
