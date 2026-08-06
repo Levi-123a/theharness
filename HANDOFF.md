@@ -192,6 +192,7 @@ class ActionType(str, Enum):
     RUN_SHELL = "run_shell"
     RUN_TESTS = "run_tests"
     GIVE_UP = "give_up"
+    DONE = "done"
 
 class FeedbackType(str, Enum):
     COMPILE_ERROR = "compile_error"
@@ -205,6 +206,7 @@ class FeedbackType(str, Enum):
 class Task:
     test_path: str
     workspace: str
+    description: str = ""  # freeform 模式的用户指令
 
 @dataclass
 class Action:
@@ -241,6 +243,7 @@ class Result:
     rounds: int
     reason: str
     action_history: list[Action] = field(default_factory=list)
+    session_id: int | None = None  # 数据库会话 ID，续接对话时用于追加
 
 @dataclass
 class GuardrailResult:
@@ -292,7 +295,8 @@ class FeedbackInjector:
 class MemoryStore:
     def __init__(self, workspace: str) -> None: ...
     def scan_project(self) -> dict: ...
-    def save_session(self, session_data: dict) -> int: ...  # session_data 含 summary 字段
+    def save_session(self, session_data: dict) -> int: ...  # session_data 含 summary/description/final_reply 字段
+    def append_to_session(self, session_id: int, session_data: dict) -> None: ...  # 追加 actions 到已有会话（续接对话），round 从 MAX(round)+1 继续
     def get_sessions(self) -> list[dict]: ...  # 列表视图，含 summary（轻量摘要）
     def get_session(self, session_id: int) -> dict | None: ...  # 详情视图，含 actions 列表
     def delete_session(self, session_id: int) -> bool: ...  # 级联删除会话及 actions，返回是否删除
@@ -305,6 +309,7 @@ class MemoryStore:
 class AgentLoop:
     def __init__(self, config, llm_provider, guardrail, tool_dispatcher, validator, classifier, injector, memory_store, hitl_callback=None): ...
     def run(self, task: Task) -> Result: ...
+    def run_freeform(self, task: Task, history: list[dict] | None = None, session_id: int | None = None) -> Result: ...  # session_id 非 None 时追加到已有会话
 ```
 
 ### Config (`the_harness/config.py`)

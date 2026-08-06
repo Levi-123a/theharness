@@ -856,3 +856,55 @@
   - **浏览器自动化与 confirm() 冲突**：`window.confirm()` 在无头浏览器中默认自动 dismiss（返回 false），需通过 `browser_evaluate` 覆盖为 `return true` 才能测试删除流程；这不是代码 bug 而是自动化限制
   - **路由注册顺序**：`POST /api/sessions/batch-delete` 必须能被正确匹配——FastAPI 按方法+路径区分，与 `GET/DELETE /api/sessions/{id}` 无冲突
   - **预存 bug 的连带影响**：`clearTerminal is not defined` 导致 tab 切换时 `loadSessions` 不执行，用户改 workspace 后无法刷新会话列表——修复后该路径恢复正常
+
+---
+
+## 2026-08-05 19:00 — 修复 4 个多轮任务与会话管理 Bug
+
+- **时间戳**：2026-08-05 19:00
+- **阶段**：Bug 修复
+- **触发的 Superpowers 技能**：`test-driven-development`（Red-Green-Refactor 循环）
+- **关键 prompt / context 配置**：
+  - 用户输入："在运行多轮测试轮数较小的情况下任务就已经超出轮数限制了,修复这个问题.在多轮任务中,仅显示了最后一轮的结果,之前的结果没有显示出来,修复这个问题.查看失败任务的旧对话时只显示了最后的错误消息,如Max rounds exceeded,修复这个问题.在同一个对话中进行多次提问,但在对话列表中却显示了多个会话,应该把他们放到一个会话中,修复这个问题"
+  - 加载 `test-driven-development` 技能，严格遵循 Red-Green-Refactor 循环
+- **Bug 1：多轮测试轮数较小情况下任务过早超出轮数限制**
+  - **根因**：`AgentLoop.run()` 和 `run_freeform()` 使用 `for round_num in range(max_rounds)` 循环，**所有迭代（含解析错误、执行失败、护栏拦截）都消耗一轮**。当 LLM 返回无效动作或动作执行失败时，这些非生产性迭代白白消耗轮数，导致小 max_rounds 任务提前耗尽
+  - **TDD 流程**：
+    1. RED：编写 5 个测试——`test_parse_error_does_not_consume_round`、`test_execution_failure_does_not_consume_round`、`test_guardrail_block_does_not_consume_round`、`test_freeform_parse_error_does_not_consume_round`、`test_freeform_execution_failure_does_not_consume_round`。设置 `max_rounds=1`，先返回一个失败/无效动作再返回一个成功动作，断言最终 `success=True`。测试失败（因非生产性迭代消耗了唯一一轮）
+    2. GREEN：将 `for` 循环改为 `while` 循环，引入双计数器：`round_num`（仅生产性轮次计数）和 `iterations`（总迭代次数，安全上限 `max_rounds * 4` 防无限循环）。解析错误 → `continue` 不递增；护栏拦截 → `continue` 不递增；执行失败 → `continue` 不递增；仅成功执行后 `round_num += 1`。测试通过
+- **Bug 2：多轮任务中仅显示最后一轮的结果**
+  - **根因**：前端 `connectWebSocket` 中 `reply` 变量在整个 WebSocket 生命周期内只创建一次，后续 `action`/`execution` 事件都更新同一个气泡，导致中间轮次的输出被覆盖
+  - **修复**：`ws.onmessage` 中每个 `action` 事件调用 `newReply()` 创建独立气泡；`execution` 事件通过 `ensureReply()` 追加到当前气泡的详情区。同时 `loadSessionDetail` 遍历 `data.actions` 为每个 action 创建独立气泡
+  - **数据层补充**：`_save_session` 新增 `action_results` 参数（与 `action_history` 平行的执行输出列表），`actions_data` 中 `result` 字段存储每个动作的执行输出；`MemoryStore.save_session` 已支持 `result` 字段
+- **Bug 3：查看失败任务旧对话时只显示最后的错误消息（如 Max rounds exceeded）**
+  - **根因**：`loadSessionDetail` 渲染逻辑未遍历 `data.actions`，仅显示 `data.reason`（如 "Max rounds exceeded"），导致失败任务的完整动作历史不可见
+  - **修复**：`loadSessionDetail` 循环渲染所有 `actions`（每个 action 一个气泡，含 reasoning + 执行结果），最后才以独立通知形式显示失败原因（`addAgentBubble(data.reason, 'error')`），不再覆盖 action 内容
+- **Bug 4：同一对话中多次提问在会话列表显示多个会话**
+  - **根因**：`run_freeform` 每次调用都通过 `save_session` 创建新会话，无追加机制；前端每次提问也不传 `session_id`，导致每个问题成为独立会话
+  - **TDD 流程**：
+    1. RED：`test_freeform_with_session_id_appends_to_existing` — 第一次 `run_freeform` 创建会话，第二次传入 `session_id` 追加，断言 `len(sessions) == 1` 且 `len(detail["actions"]) == 2`。测试失败（`save_session` 总创建新会话，`sessions` 数量为 2）
+    2. GREEN（MemoryStore 层）：新增 `append_to_session(session_id, session_data)` 方法——查询当前 `MAX(round)` 继续编号，插入新 actions，更新 sessions 表的 `final_reply`/`description`（追加新问题）/`rounds`（累加）/`reason`/`summary`
+    3. GREEN（AgentLoop 层）：`run_freeform` 新增 `session_id: int | None` 参数；`_save_session` 新增 `session_id` 参数，非 None 时调用 `append_to_session` 否则调用 `save_session`；`Result` 数据类新增 `session_id: int | None` 字段
+    4. GREEN（WebUI 层）：`/api/instruct` 接收 `session_id` 参数；`/ws/instruct/{id}` 传给 `run_freeform`；`result` 事件回传 `session_id`；前端 `currentDbSessionId` 追踪当前会话，后续提问时传入
+    5. GREEN（DONE/GIVE_UP 记录）：`run_freeform` 中 DONE/GIVE_UP 动作显式加入 `action_history`，确保每次问答至少有一个 action 记录（否则追加会话时该次提问无动作可见）
+- **验证**：
+  - 全量 133 个测试通过（125 原有 + 8 新增），无回归
+  - 浏览器验证（browser_use subagent）：向临时 workspace 注入 3 条种子会话（多轮修复、Max rounds 失败、含后续提问的 freeform），逐项验证：
+    - 会话 #1（3 轮修复）：渲染出 3 个独立 agent 气泡（read_file/edit_file/write_file），每个含 reasoning 和执行结果 ✓
+    - 会话 #2（Max rounds 失败）：渲染出 3 个 action 气泡 + 红色 "Max rounds exceeded" 错误通知 ✓
+    - 会话 #3（2 次提问合并）：同一会话详情中显示 2 个用户气泡和 2 个 agent 回答 ✓
+- **涉及文件**：
+  - `the_harness/agent_loop.py` — `run`/`run_freeform` 改 while 循环 + 双计数器；`_save_session` 新增 `action_results`/`session_id` 参数；`run_freeform` 新增 `session_id` 参数；DONE/GIVE_UP 显式入 history
+  - `the_harness/memory/store.py` — 新增 `append_to_session` 方法
+  - `the_harness/models.py` — `Result` 新增 `session_id: int | None` 字段
+  - `the_harness/webui/app.py` — `/api/instruct` 接收 `session_id`；`/ws/instruct` 传参；`result` 事件回传 `session_id`
+  - `the_harness/webui/static/app.js` — `connectWebSocket` 每个 action 新建气泡；`loadSessionDetail` 遍历所有 actions；`currentDbSessionId` 追踪会话
+  - `tests/test_agent_loop.py` — 7 个新测试（5 轮数计数 + 1 结果存储 + 1 会话追加）
+  - `tests/test_memory_store.py` — 1 个新测试（`test_append_to_session_adds_actions`）
+- **文档更新**：同步更新 `SPEC.md`（数据库 schema + MemoryStore 接口 + run_freeform 签名 + /api/instruct 参数）、`HANDOFF.md`（MemoryStore 接口 + Result 数据类 + run_freeform 签名）、本文件
+- **学到的教训**：
+  - **生产性 vs 非生产性迭代**：agent loop 中并非每次迭代都等同于"消耗一轮"——解析错误、护栏拦截、执行失败本质是"重试"，不应消耗用户配额。用双计数器（`round_num` 仅计成功 + `iterations` 总量安全帽）是正确的抽象
+  - **前端气泡生命周期**：流式 UI 中"一次用户输入一个气泡"的直觉是错的——多轮任务中每轮 action 应有独立气泡，否则中间结果被覆盖。`newReply()`/`ensureReply()` 的区分让"新轮次开新气泡"与"同轮次追加详情"两种语义清晰分离
+  - **会话追加的 round 编号**：`append_to_session` 必须查询 `MAX(round)` 继续编号，否则新 actions 的 round 从 1 开始会与已有 actions 冲突
+  - **DONE 动作的记录价值**：freeform 模式下 LLM 可能立即返回 DONE（无文件操作），若不显式加入 `action_history`，该次提问在会话详情中无任何 action 记录，用户看不到 AI 的回答
+  - **浏览器验证的 workspace 陷阱**：项目目录自身的 `.harness/sessions.db` 包含开发期间产生的会话，与种子数据混淆；浏览器验证时必须显式设置 workspace 并切换 tab 触发 `loadSessions` 刷新

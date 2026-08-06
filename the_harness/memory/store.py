@@ -270,6 +270,74 @@ class MemoryStore:
         finally:
             conn.close()
 
+    def append_to_session(self, session_id: int, session_data: dict[str, Any]) -> None:
+        """Append new actions to an existing session (for follow-up questions).
+
+        Inserts new actions with round numbers continuing from the existing
+        max round. Updates final_reply, description, success, rounds, reason,
+        and summary to reflect the latest exchange.
+
+        Args:
+            session_id: The existing session ID to append to.
+            session_data: Dict with actions list and updated session fields.
+        """
+        conn = sqlite3.connect(str(self._db_path))
+        try:
+            # Get current max round number to continue numbering
+            row = conn.execute(
+                "SELECT MAX(round) FROM actions WHERE session_id = ?", (session_id,)
+            ).fetchone()
+            max_round = row[0] if row[0] else 0
+
+            # Insert new actions with continuing round numbers
+            for i, action in enumerate(session_data.get("actions", [])):
+                conn.execute(
+                    "INSERT INTO actions (session_id, round, action_type, action_params, result, reasoning) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        session_id,
+                        max_round + i + 1,
+                        action.get("action_type", ""),
+                        json.dumps(action.get("action_params", {})),
+                        action.get("result", ""),
+                        action.get("reasoning", ""),
+                    ),
+                )
+
+            # Add new rounds to the existing count
+            current = conn.execute(
+                "SELECT rounds, description FROM sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            old_rounds = current[0] if current else 0
+            old_desc = current[1] if current else ""
+            new_rounds = old_rounds + session_data.get("rounds", 0)
+            # Append the new question to the description so the full
+            # conversation history is preserved.
+            new_desc_part = session_data.get("description", "")
+            if old_desc and new_desc_part:
+                new_desc = old_desc + "\n" + new_desc_part
+            else:
+                new_desc = new_desc_part or old_desc
+
+            conn.execute(
+                """UPDATE sessions SET
+                   final_reply = ?, description = ?, success = ?,
+                   rounds = ?, reason = ?, summary = ?
+                   WHERE id = ?""",
+                (
+                    session_data.get("final_reply", ""),
+                    new_desc,
+                    1 if session_data.get("success") else 0,
+                    new_rounds,
+                    session_data.get("reason", ""),
+                    session_data.get("summary", ""),
+                    session_id,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     def save_failure_pattern(self, failure_type: str, strategy: str) -> None:
         """Save or update a failure pattern strategy.
 

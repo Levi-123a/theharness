@@ -43,8 +43,9 @@
 - **输入**：`Task`（包含 failing test 路径、工作目录路径、可选的自由指令描述）、`Config`（最大轮次、LLM 供应商配置等）
 - **行为**：
   - **Fix Test 模式** `run(task)`：组织上下文 → 调用 LLM → 解析动作 → 护栏检查 → 分发执行 → 校验器运行测试 → 分类器分类失败 → 回灌反馈 → 停机判断 → 循环或终止
-  - **Freeform 模式** `run_freeform(task)`：组织上下文（含用户文字描述）→ 调用 LLM → 解析动作 → 护栏检查 → 分发执行 → 将执行结果回灌给 LLM → 检查 done/give_up → 循环或终止。不运行测试校验器和分类器，LLM 自主决定何时完成
-- **输出**：`Result`（success: bool, rounds: int, reason: str, action_history: list）
+  - **Freeform 模式** `run_freeform(task, history=None, session_id=None)`：组织上下文（含用户文字描述和对话历史）→ 调用 LLM → 解析动作 → 护栏检查 → 分发执行 → 将执行结果回灌给 LLM → 检查 done/give_up → 循环或终止。不运行测试校验器和分类器，LLM 自主决定何时完成。传入 `session_id` 时追加到已有会话而非创建新会话（用于续接对话）
+- **输出**：`Result`（success: bool, rounds: int, reason: str, action_history: list, session_id: int | None）
+- **轮数计数**：仅生产性迭代（动作成功执行）消耗轮数；解析错误、护栏拦截、执行失败视为非生产性重试，不消耗轮数。总迭代次数有安全上限（`max_rounds * 4`）防止无限循环
 - **边界条件**：最大轮次默认 5，可配置；工作目录外操作被拒绝
 - **错误处理**：LLM 调用失败时重试 1 次，仍失败则停机；动作解析失败时回灌"请返回规范 JSON"
 
@@ -124,10 +125,10 @@
 
 ### 3.6 记忆（MemoryStore）
 
-- **输入**：`Task`、当前失败类型
-- **行为**：按需查询相关记忆片段，注入上下文
-- **输出**：上下文片段
-- **边界条件**：不预加载整个代码库；跨会话只保留摘要
+- **输入**：`Task`、当前失败类型、会话数据（含 actions 列表）
+- **行为**：按需查询相关记忆片段，注入上下文；保存会话及动作序列；支持追加动作到已有会话（续接对话）
+- **输出**：上下文片段、会话 ID
+- **边界条件**：不预加载整个代码库；跨会话只保留摘要；追加会话时 round 编号从已有最大值继续
 
 存储内容：
 1. `project_context.json`：项目元信息（语言、测试框架、目录布局）
@@ -160,7 +161,7 @@
 | 端点 | 方法 | 描述 |
 |------|------|------|
 | `/api/fix` | POST | 启动 Fix Test 任务 |
-| `/api/instruct` | POST | 启动 Freeform 任务 |
+| `/api/instruct` | POST | 启动 Freeform 任务（Body 含可选 `session_id` 用于续接对话时追加到已有会话） |
 | `/api/sessions` | GET | 列出历史会话 |
 | `/api/sessions/{id}` | GET | 获取会话详情 |
 | `/api/sessions/{id}` | DELETE | 删除单个会话（级联删除关联 actions） |
@@ -332,14 +333,16 @@ session_history.db (SQLite)
 │   ├── rounds: int
 │   ├── created_at: datetime
 │   ├── reason: str
-│   └── summary: str          # AI 生成的一句话摘要，侧边栏列表显示
+│   ├── summary: str          # AI 生成的一句话摘要，侧边栏列表显示
+│   ├── description: str      # freeform 模式的用户指令；续接对话时追加新问题
+│   └── final_reply: str      # AI 最终回复文本（done/give_up 的 reasoning）
 └── actions
     ├── id: int
     ├── session_id: int (FK)
     ├── round: int
     ├── action_type: str
     ├── action_params: str (JSON)
-    ├── result: str (JSON)
+    ├── result: str            # 执行输出，详情视图折叠展示
     └── reasoning: str         # AI 思考过程，详情视图渲染为气泡
 
 failure_patterns.json

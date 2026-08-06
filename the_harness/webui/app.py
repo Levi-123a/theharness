@@ -274,14 +274,19 @@ async def start_fix(payload: dict[str, Any]) -> JSONResponse:
 async def start_instruct(payload: dict[str, Any]) -> JSONResponse:
     """Start a freeform instruction task.
 
-    Body: {"description": "...", "workspace": "...", "history": [...]}
-    Returns: {"session_id": "..."}
+    Body: {"description": "...", "workspace": "...", "history": [...], "session_id": <int|null>}
+    Returns: {"session_id": "..."}  (WebSocket session ID, not DB session ID)
     """
     description = payload.get("description", "").strip()
     if not description:
         raise HTTPException(status_code=400, detail="description is required")
     workspace = _validate_workspace(payload.get("workspace", "."))
     history = payload.get("history", []) or []
+    # DB session ID for follow-up questions — when provided, the agent
+    # appends to this session instead of creating a new one.
+    db_session_id = payload.get("session_id")
+    if db_session_id is not None:
+        db_session_id = int(db_session_id)
     session_id = str(uuid.uuid4())
     _sessions[session_id] = {
         "task": Task(test_path="", workspace=workspace, description=description),
@@ -289,6 +294,7 @@ async def start_instruct(payload: dict[str, Any]) -> JSONResponse:
         "status": "pending",
         "mode": "freeform",
         "history": history,
+        "db_session_id": db_session_id,
     }
     return JSONResponse({"session_id": session_id})
 
@@ -477,6 +483,8 @@ async def ws_instruct(websocket: WebSocket, session_id: str) -> None:
     session = _sessions[session_id]
     task: Task = session["task"]
     workspace = session["workspace"]
+    history = session.get("history", [])
+    db_session_id = session.get("db_session_id")
 
     # Thread-safe queue for cross-thread event passing
     event_queue: queue.Queue = queue.Queue()
@@ -485,8 +493,12 @@ async def ws_instruct(websocket: WebSocket, session_id: str) -> None:
     loop = _agent_loop_factory(workspace, event_queue, freeform=True)
 
     try:
-        # Run the freeform loop in a background thread
-        run_task = asyncio.create_task(asyncio.to_thread(loop.run_freeform, task))
+        # Run the freeform loop in a background thread.
+        # Pass history for conversation context and db_session_id for
+        # appending to an existing session (follow-up questions).
+        run_task = asyncio.create_task(
+            asyncio.to_thread(loop.run_freeform, task, history, db_session_id)
+        )
 
         # Consume events from the queue and send them over WebSocket in real-time
         while True:
@@ -510,6 +522,7 @@ async def ws_instruct(websocket: WebSocket, session_id: str) -> None:
                 "success": result.success,
                 "rounds": result.rounds,
                 "reason": result.reason,
+                "session_id": result.session_id,
             },
         })
     except WebSocketDisconnect:

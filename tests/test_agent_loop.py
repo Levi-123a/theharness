@@ -206,3 +206,146 @@ def test_feedback_drives_correction(tmp_path):
     result = loop.run(Task(test_path="tests/test_foo.py", workspace=str(tmp_path)))
     assert result.success is True
     assert result.rounds == 2
+
+
+# ── Bug1: 非生产性迭代不应消耗轮数 ────────────────────────────
+
+
+def test_parse_error_does_not_consume_round(tmp_path):
+    """A parse error should not count against max_rounds.
+
+    Bug: with max_rounds=1, if the LLM first returns an invalid action
+    (parse error) and then a valid passing action, the task should
+    succeed because the parse error is a retry, not a consumed round.
+    """
+    actions = [
+        {"action": "invalid_action", "params": {}, "reasoning": "typo"},
+        {"action": "write_file", "params": {"file_path": "a.py", "content": "x=1"}, "reasoning": "fix"},
+    ]
+    results = [TestResult(exit_code=0, stdout="1 passed", stderr="", passed=True)]
+    loop = _make_loop(tmp_path, actions, results, max_rounds=1)
+    result = loop.run(Task(test_path="tests/test_foo.py", workspace=str(tmp_path)))
+    assert result.success is True
+
+
+def test_execution_failure_does_not_consume_round(tmp_path):
+    """An execution failure should not count against max_rounds.
+
+    Bug: with max_rounds=1, if the first action fails to execute (e.g.
+    editing a nonexistent file) and the second action succeeds and passes,
+    the task should succeed because the failed execution is a retry.
+    """
+    actions = [
+        {"action": "edit_file", "params": {"file_path": "nonexistent.py", "old_text": "x", "new_text": "y"}, "reasoning": "edit missing file"},
+        {"action": "write_file", "params": {"file_path": "good.py", "content": "x=1"}, "reasoning": "create file"},
+    ]
+    results = [TestResult(exit_code=0, stdout="1 passed", stderr="", passed=True)]
+    loop = _make_loop(tmp_path, actions, results, max_rounds=1)
+    result = loop.run(Task(test_path="tests/test_foo.py", workspace=str(tmp_path)))
+    assert result.success is True
+
+
+def test_guardrail_block_does_not_consume_round(tmp_path):
+    """A guardrail-blocked action should not count against max_rounds.
+
+    Bug: with max_rounds=1, if the first action is blocked by guardrail
+    (e.g. rm -rf /) and the second action is safe and passes, the task
+    should succeed because the blocked action is a retry.
+    """
+    actions = [
+        {"action": "run_shell", "params": {"command": "rm -rf /"}, "reasoning": "dangerous"},
+        {"action": "write_file", "params": {"file_path": "safe.py", "content": "x=1"}, "reasoning": "safe"},
+    ]
+    results = [TestResult(exit_code=0, stdout="1 passed", stderr="", passed=True)]
+    loop = _make_loop(tmp_path, actions, results, max_rounds=1)
+    result = loop.run(Task(test_path="tests/test_foo.py", workspace=str(tmp_path)))
+    assert result.success is True
+
+
+def test_freeform_parse_error_does_not_consume_round(tmp_path):
+    """In freeform mode, a parse error should not count against max_rounds."""
+    actions = [
+        {"action": "invalid_action", "params": {}, "reasoning": "typo"},
+        {"action": "done", "params": {}, "reasoning": "done"},
+    ]
+    loop = _make_loop(tmp_path, actions, [], max_rounds=1)
+    task = Task(test_path="", workspace=str(tmp_path), description="test")
+    result = loop.run_freeform(task)
+    assert result.success is True
+
+
+def test_freeform_execution_failure_does_not_consume_round(tmp_path):
+    """In freeform mode, an execution failure should not count against max_rounds."""
+    actions = [
+        {"action": "read_file", "params": {"file_path": "nonexistent.py"}, "reasoning": "read missing"},
+        {"action": "done", "params": {}, "reasoning": "done"},
+    ]
+    loop = _make_loop(tmp_path, actions, [], max_rounds=1)
+    task = Task(test_path="", workspace=str(tmp_path), description="test")
+    result = loop.run_freeform(task)
+    assert result.success is True
+
+
+# ── Bug3 后端: actions 应保存执行结果 ────────────────────────
+
+
+def test_session_actions_include_execution_results(tmp_path):
+    """Saved session actions should include execution output for each action.
+
+    Bug: when viewing a past session, action results (execution output)
+    were not saved — only action type/params/reasoning. So old sessions
+    showed action names but no results, making it impossible to see what
+    actually happened in each round.
+    """
+    actions = [
+        {"action": "write_file", "params": {"file_path": "a.py", "content": "x=1"}, "reasoning": "create"},
+        {"action": "write_file", "params": {"file_path": "b.py", "content": "y=2"}, "reasoning": "fix"},
+    ]
+    results = [
+        TestResult(exit_code=1, stdout="1 failed", stderr="err", passed=False),
+        TestResult(exit_code=0, stdout="1 passed", stderr="", passed=True),
+    ]
+    loop = _make_loop(tmp_path, actions, results)
+    loop.run(Task(test_path="tests/test_foo.py", workspace=str(tmp_path)))
+
+    sessions = loop._memory.get_sessions()
+    assert len(sessions) == 1
+    detail = loop._memory.get_session(sessions[0]["id"])
+    assert len(detail["actions"]) == 2
+    # Each action should have a non-empty result (execution output)
+    assert detail["actions"][0]["result"] != ""
+    assert detail["actions"][1]["result"] != ""
+
+
+# ── Bug4: 同会话多次提问应归并到一个会话 ────────────────────
+
+
+def test_freeform_with_session_id_appends_to_existing(tmp_path):
+    """run_freeform with session_id should append to existing session.
+
+    Bug: each follow-up question in a freeform conversation created a new
+    session, cluttering the sidebar. With session_id, follow-up actions
+    are appended to the original session.
+    """
+    # First question creates a session
+    actions1 = [{"action": "done", "params": {}, "reasoning": "第一个回答"}]
+    loop1 = _make_loop(tmp_path, actions1, [])
+    task1 = Task(test_path="", workspace=str(tmp_path), description="第一个问题")
+    loop1.run_freeform(task1)
+
+    sessions = loop1._memory.get_sessions()
+    assert len(sessions) == 1
+    session_id = sessions[0]["id"]
+
+    # Second question should append to the same session
+    actions2 = [{"action": "done", "params": {}, "reasoning": "第二个回答"}]
+    loop2 = _make_loop(tmp_path, actions2, [])
+    task2 = Task(test_path="", workspace=str(tmp_path), description="第二个问题")
+    loop2.run_freeform(task2, session_id=session_id)
+
+    sessions = loop2._memory.get_sessions()
+    assert len(sessions) == 1  # still only 1 session!
+    detail = loop2._memory.get_session(session_id)
+    assert len(detail["actions"]) == 2
+    # final_reply should be updated to the latest
+    assert detail["final_reply"] == "第二个回答"

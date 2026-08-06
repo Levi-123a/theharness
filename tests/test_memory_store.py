@@ -181,6 +181,52 @@ def test_delete_sessions_batch_removes_multiple(tmp_path):
     assert remaining[0]["id"] == sid2
 
 
+def test_append_to_session_adds_actions(tmp_path):
+    """append_to_session should add new actions to an existing session.
+
+    Used by freeform mode when the user asks follow-up questions: instead
+    of creating a new session, the new actions/reply are appended to the
+    existing session so the conversation stays as one entry in the sidebar.
+    """
+    store = MemoryStore(str(tmp_path))
+    session_id = store.save_session({
+        "test_path": "",
+        "description": "第一个问题",
+        "success": True,
+        "rounds": 1,
+        "reason": "Task completed",
+        "final_reply": "第一个回答",
+        "actions": [
+            {"round": 1, "action_type": "done", "action_params": {}, "result": "", "reasoning": "第一个回答"},
+        ],
+    })
+
+    # User asks a follow-up question — append to the same session
+    store.append_to_session(session_id, {
+        "description": "第二个问题",
+        "final_reply": "第二个回答",
+        "success": True,
+        "rounds": 1,
+        "reason": "Task completed",
+        "summary": "第二个问题的摘要",
+        "actions": [
+            {"round": 2, "action_type": "done", "action_params": {}, "result": "", "reasoning": "第二个回答"},
+        ],
+    })
+
+    # Session should now have 2 actions
+    detail = store.get_session(session_id)
+    assert len(detail["actions"]) == 2
+    assert detail["actions"][1]["round"] == 2
+    # final_reply should be updated to the latest
+    assert detail["final_reply"] == "第二个回答"
+    # summary should be updated
+    assert detail["summary"] == "第二个问题的摘要"
+    # Still only 1 session in the list
+    sessions = store.get_sessions()
+    assert len(sessions) == 1
+
+
 def test_save_and_get_session_description(tmp_path):
     """save_session() should store description and get_session() should return it.
 

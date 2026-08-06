@@ -133,12 +133,14 @@ class Result:
         rounds: Number of rounds the agent ran.
         reason: Why the agent stopped (success, max rounds, gave up, etc.).
         action_history: List of all actions the agent took.
+        session_id: The database session ID (for follow-up appending).
     """
 
     success: bool
     rounds: int
     reason: str
     action_history: list[Action] = field(default_factory=list)
+    session_id: int | None = None
 
 
 @dataclass

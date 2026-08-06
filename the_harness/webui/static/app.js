@@ -22,6 +22,8 @@ let currentMode = 'fix';
 let conversationHistory = [];
 // 当前 WebSocket 回复气泡的最终文本（用于回复完成后记入历史）
 let pendingReplyText = '';
+// 当前数据库会话 ID — 用于续接对话时将新消息追加到同一会话
+let currentDbSessionId = null;
 
 // ── 状态指示 ──────────────────────────────────────────────
 
@@ -390,50 +392,46 @@ async function loadSessionDetail(id, workspace) {
         const resp = await fetch(`/api/sessions/${id}?workspace=${encodeURIComponent(workspace)}`);
         const data = await resp.json();
         clearChat();
+        // 设置当前 DB 会话 ID，使后续提问追加到同一会话
+        currentDbSessionId = data.id;
         // 显示用户消息（freeform 用 description，fix 模式用 test_path）
+        // description 可能包含多行（续接对话时追加的问题）
         const userMsg = data.description || data.test_path || '';
         if (userMsg) {
-            addUserBubble(userMsg, `会话 #${data.id}`);
+            const lines = userMsg.split('\n').filter(l => l.trim());
+            for (const line of lines) {
+                addUserBubble(line, `会话 #${data.id}`);
+            }
         } else {
             addAgentBubble(`目标: 无`, 'info', null, `会话 #${data.id}`);
         }
-        // 显示 AI 回复：优先用 final_reply（done/give_up 的 reasoning），
-        // 否则用 actions 中的内容
+
         const actions = data.actions || [];
-        if (data.final_reply) {
-            // 有 AI 最终回复文本（freeform 常见情况）
+
+        // 渲染所有 actions，每个 action 独立一个气泡
+        // 这样多轮任务的所有中间步骤都可见
+        for (const a of actions) {
+            const reply = createReplyBubble();
+            const params = a.action_params || {};
+            const paramsStr = Object.keys(params).length ? JSON.stringify(params) : '';
+            reply.setMeta(a.action_type + (paramsStr ? ' ' + paramsStr : '') + ` · 第${a.round}轮`);
+            const headline = a.reasoning || a.action_type || '';
+            reply.setHeadline(headline, 'action');
+            if (a.result) {
+                reply.appendDetail('执行结果', a.result);
+            }
+        }
+
+        // 显示 AI 最终回复文本（如果与最后一个 action 的 reasoning 不同）
+        const lastAction = actions.length > 0 ? actions[actions.length - 1] : null;
+        const lastReasoning = lastAction ? (lastAction.reasoning || '') : '';
+        if (data.final_reply && data.final_reply !== lastReasoning) {
             const reply = createReplyBubble();
             reply.setHeadline(data.final_reply, data.success ? 'result' : 'error');
-            // 如果有操作记录，折叠到详情区
-            if (actions.length > 0) {
-                const first = actions[0];
-                const params = first.action_params || {};
-                const paramsStr = Object.keys(params).length ? JSON.stringify(params) : '';
-                reply.setMeta(first.action_type + (paramsStr ? ' ' + paramsStr : ''));
-                for (const a of actions) {
-                    if (a.result) {
-                        reply.appendDetail(a.action_type, a.result);
-                    }
-                }
-            }
-        } else if (actions.length > 0) {
-            // 没有最终回复文本，用 actions 构建回复气泡
-            const reply = createReplyBubble();
-            const last = actions[actions.length - 1];
-            reply.setHeadline(last.reasoning || last.action_type || '', data.success ? 'action' : 'error');
-            const first = actions[0];
-            const params = first.action_params || {};
-            const paramsStr = Object.keys(params).length ? JSON.stringify(params) : '';
-            reply.setMeta(first.action_type + (paramsStr ? ' ' + paramsStr : ''));
-            for (const a of actions) {
-                if (a.result) {
-                    reply.appendDetail(a.action_type, a.result);
-                }
-            }
-            if (!data.success && data.reason && !LOW_VALUE_REASONS.test(data.reason.trim())) {
-                reply.setHeadline(data.reason, 'error');
-            }
-        } else if (!data.success && data.reason) {
+        }
+
+        // 失败原因作为独立通知显示（不覆盖 action 内容）
+        if (!data.success && data.reason && !LOW_VALUE_REASONS.test(data.reason.trim())) {
             addAgentBubble(data.reason, 'error');
         }
     } catch (e) {
@@ -506,6 +504,7 @@ instructBtn.addEventListener('click', async () => {
                 description: description,
                 workspace: workspace,
                 history: conversationHistory,
+                session_id: currentDbSessionId,
             }),
         });
         const data = await resp.json();
@@ -541,41 +540,54 @@ function connectWebSocket(mode, sessionId, userMessage) {
     const ws = new WebSocket(wsUrl);
 
     setStatus('connected', '已连接');
-    // 一次用户输入只对应一个累积回复气泡
+    // 每一轮 action 产生一个新的回复气泡，这样多轮任务的所有
+    // 中间结果都可见，而非仅显示最后一轮。
     let reply = null;
+    function newReply() {
+        reply = createReplyBubble();
+        return reply;
+    }
     function ensureReply() {
-        if (!reply) reply = createReplyBubble();
+        if (!reply) reply = newReply();
         return reply;
     }
 
     ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
         if (msg.type === 'action') {
+            // 每个 action 事件代表一轮新的尝试 → 创建新气泡
+            newReply();
             const params = msg.data.params;
             const paramsStr = Object.keys(params).length ? JSON.stringify(params) : '';
-            // reasoning 是 AI 的实际思考 → 更新为气泡主内容
+            // reasoning 是 AI 的实际思考 → 作为气泡主内容
             const headline = msg.data.reasoning || msg.data.action;
-            ensureReply().setHeadline(headline, 'action');
-            ensureReply().setMeta(msg.data.action + (paramsStr ? ' ' + paramsStr : ''));
+            reply.setHeadline(headline, 'action');
+            reply.setMeta(msg.data.action + (paramsStr ? ' ' + paramsStr : ''));
             // 记录回复文本用于对话历史
             if (msg.data.reasoning) pendingReplyText = msg.data.reasoning;
         } else if (msg.type === 'execution') {
-            // 执行输出折叠到详情区，不单独开气泡
+            // 执行输出折叠到当前气泡的详情区
             const output = msg.data.error
                 ? '错误: ' + msg.data.error + (msg.data.output ? '\n' + msg.data.output : '')
                 : (msg.data.output || (msg.data.success ? '完成' : '失败'));
             const label = msg.data.action + (msg.data.success ? ' · 成功' : ' · 失败');
             ensureReply().appendDetail(label, output);
         } else if (msg.type === 'feedback') {
-            // 测试输出折叠到详情区
+            // 测试输出折叠到当前气泡的详情区
             const verdict = msg.data.passed ? '通过' : '未通过';
             const output = msg.data.stdout || (msg.data.passed ? '测试通过' : '测试失败');
             ensureReply().appendDetail('测试 ' + verdict, output);
         } else if (msg.type === 'result') {
+            // 捕获数据库会话 ID（用于续接对话时追加到同一会话）
+            if (msg.data.session_id) {
+                currentDbSessionId = msg.data.session_id;
+            }
             // 抑制低价值的成功信息；仅失败时更新主内容
             const reason = (msg.data.reason || '').trim();
             if (!msg.data.success) {
-                ensureReply().setHeadline(reason || '任务失败', 'error');
+                if (!LOW_VALUE_REASONS.test(reason)) {
+                    ensureReply().setHeadline(reason || '任务失败', 'error');
+                }
                 if (reason) pendingReplyText = reason;
             }
         } else if (msg.type === 'error') {
@@ -609,6 +621,7 @@ function connectWebSocket(mode, sessionId, userMessage) {
 newChatBtn.addEventListener('click', () => {
     conversationHistory = [];
     pendingReplyText = '';
+    currentDbSessionId = null;
     clearChat();
     addAgentBubble('已开始新对话，请输入您的需求。', 'info');
 });

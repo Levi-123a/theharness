@@ -75,8 +75,17 @@ class AgentLoop:
         """
         context_parts: list[str] = [self._memory.build_context(task)]
         action_history: list[Action] = []
+        # Track execution output per action so it can be saved with the session.
+        action_results: list[str] = []
+        # Only productive iterations (action successfully executed) count
+        # against max_rounds. Parse errors, guardrail blocks, and execution
+        # failures are retries that do NOT consume a round.
+        round_num = 0
+        max_iterations = self._config.max_rounds * 4  # safety cap vs infinite loops
+        iterations = 0
 
-        for round_num in range(1, self._config.max_rounds + 1):
+        while round_num < self._config.max_rounds and iterations < max_iterations:
+            iterations += 1
             # a. Call LLM
             messages = [{"role": "system", "content": "\n\n".join(context_parts)}]
             response = self._llm.complete(messages)
@@ -88,10 +97,10 @@ class AgentLoop:
 
             # c. Check give_up
             if action.type == ActionType.GIVE_UP:
-                self._save_session(task, False, round_num, "LLM gave up", action_history)
+                self._save_session(task, False, round_num + 1, "LLM gave up", action_history, action_results=action_results)
                 return Result(
                     success=False,
-                    rounds=round_num,
+                    rounds=round_num + 1,
                     reason="LLM gave up",
                     action_history=action_history,
                 )
@@ -111,7 +120,11 @@ class AgentLoop:
             if not exec_result.success:
                 context_parts.append(f"Action execution failed: {exec_result.error}")
                 continue
+
+            # Productive round — increment counter
+            round_num += 1
             action_history.append(action)
+            action_results.append(exec_result.output or "")
 
             # g. Run tests
             test_result = self._validator.validate(task.test_path)
@@ -121,7 +134,7 @@ class AgentLoop:
 
             # i. Check pass
             if feedback.type == FeedbackType.PASS:
-                self._save_session(task, True, round_num, "All tests passed", action_history)
+                self._save_session(task, True, round_num, "All tests passed", action_history, action_results=action_results)
                 return Result(
                     success=True,
                     rounds=round_num,
@@ -131,7 +144,7 @@ class AgentLoop:
 
             # j. Check repeated action
             if self._is_repeated(action_history):
-                self._save_session(task, False, round_num, "Stuck in loop: repeated action", action_history)
+                self._save_session(task, False, round_num, "Stuck in loop: repeated action", action_history, action_results=action_results)
                 return Result(
                     success=False,
                     rounds=round_num,
@@ -147,7 +160,7 @@ class AgentLoop:
             self._memory.save_failure_pattern(feedback.type.value, feedback.strategy_hint)
 
         # 3. Max rounds exceeded
-        self._save_session(task, False, self._config.max_rounds, "Max rounds exceeded", action_history)
+        self._save_session(task, False, self._config.max_rounds, "Max rounds exceeded", action_history, action_results=action_results)
         return Result(
             success=False,
             rounds=self._config.max_rounds,
@@ -155,7 +168,12 @@ class AgentLoop:
             action_history=action_history,
         )
 
-    def run_freeform(self, task: Task, history: list[dict[str, str]] | None = None) -> Result:
+    def run_freeform(
+        self,
+        task: Task,
+        history: list[dict[str, str]] | None = None,
+        session_id: int | None = None,
+    ) -> Result:
         """Run the agent in freeform mode — no test validation, LLM decides when done.
 
         The agent reads, edits, writes files and runs shell commands based on
@@ -168,6 +186,10 @@ class AgentLoop:
                      is ``{"role": "user"|"assistant", "content": "..."}``.
                      When provided, the LLM receives previous Q&A pairs as
                      context so it can answer follow-up questions.
+            session_id: Optional existing session ID to append to. When provided,
+                        new actions are added to that session instead of creating
+                        a new one — used when the user asks follow-up questions
+                        in the same conversation.
 
         Returns:
             Result with success status, rounds, reason, and action history.
@@ -184,8 +206,14 @@ class AgentLoop:
                 history_lines.append(f"{role}: {h.get('content', '')}")
             context_parts.insert(0, "对话历史:\n" + "\n".join(history_lines))
         action_history: list[Action] = []
+        action_results: list[str] = []
+        # Only productive iterations count against max_rounds.
+        round_num = 0
+        max_iterations = self._config.max_rounds * 4
+        iterations = 0
 
-        for round_num in range(1, self._config.max_rounds + 1):
+        while round_num < self._config.max_rounds and iterations < max_iterations:
+            iterations += 1
             # a. Call LLM
             messages = [{"role": "system", "content": "\n\n".join(context_parts)}]
             response = self._llm.complete(messages)
@@ -197,20 +225,36 @@ class AgentLoop:
 
             # c. Check done / give_up
             if action.type == ActionType.DONE:
-                self._save_session(task, True, round_num, "Task completed", action_history, final_reply=action.reasoning)
+                # Include the done action in history so each Q&A exchange
+                # has at least one action record (visible in session detail).
+                action_history.append(action)
+                action_results.append(action.reasoning or "")
+                sid = self._save_session(
+                    task, True, round_num + 1, "Task completed",
+                    action_history, action_results=action_results,
+                    final_reply=action.reasoning, session_id=session_id,
+                )
                 return Result(
                     success=True,
-                    rounds=round_num,
+                    rounds=round_num + 1,
                     reason="Task completed",
                     action_history=action_history,
+                    session_id=sid,
                 )
             if action.type == ActionType.GIVE_UP:
-                self._save_session(task, False, round_num, "LLM gave up", action_history, final_reply=action.reasoning)
+                action_history.append(action)
+                action_results.append(action.reasoning or "")
+                sid = self._save_session(
+                    task, False, round_num + 1, "LLM gave up",
+                    action_history, action_results=action_results,
+                    final_reply=action.reasoning, session_id=session_id,
+                )
                 return Result(
                     success=False,
-                    rounds=round_num,
+                    rounds=round_num + 1,
                     reason="LLM gave up",
                     action_history=action_history,
+                    session_id=sid,
                 )
 
             # d. Guardrail check
@@ -230,7 +274,11 @@ class AgentLoop:
                     f"Action execution failed: {exec_result.error}\nOutput: {exec_result.output}"
                 )
                 continue
+
+            # Productive round
+            round_num += 1
             action_history.append(action)
+            action_results.append(exec_result.output or "")
 
             # g. Feed execution output back to LLM
             output_preview = exec_result.output[:2000] if exec_result.output else "(no output)"
@@ -240,21 +288,31 @@ class AgentLoop:
 
             # h. Check repeated action
             if self._is_repeated(action_history):
-                self._save_session(task, False, round_num, "Stuck in loop: repeated action", action_history)
+                sid = self._save_session(
+                    task, False, round_num, "Stuck in loop: repeated action",
+                    action_history, action_results=action_results,
+                    session_id=session_id,
+                )
                 return Result(
                     success=False,
                     rounds=round_num,
                     reason="Stuck in loop: repeated action",
                     action_history=action_history,
+                    session_id=sid,
                 )
 
         # Max rounds exceeded
-        self._save_session(task, False, self._config.max_rounds, "Max rounds exceeded", action_history)
+        sid = self._save_session(
+            task, False, self._config.max_rounds, "Max rounds exceeded",
+            action_history, action_results=action_results,
+            session_id=session_id,
+        )
         return Result(
             success=False,
             rounds=self._config.max_rounds,
             reason="Max rounds exceeded",
             action_history=action_history,
+            session_id=sid,
         )
 
     def _save_session(
@@ -264,8 +322,10 @@ class AgentLoop:
         rounds: int,
         reason: str,
         action_history: list[Action],
+        action_results: list[str] | None = None,
         final_reply: str = "",
-    ) -> None:
+        session_id: int | None = None,
+    ) -> int:
         """Save session data to the memory store on all exit paths.
 
         Args:
@@ -274,12 +334,19 @@ class AgentLoop:
             rounds: Number of rounds executed.
             reason: Exit reason.
             action_history: List of actions taken.
+            action_results: Execution output for each action (parallel list).
             final_reply: The AI's final text reply (from done/give_up
                          responses). For freeform sessions where the LLM
                          immediately returns 'done', this is the only
                          AI output — without it the session detail would
                          show nothing.
+            session_id: If provided, append to this existing session instead
+                        of creating a new one (used for follow-up questions).
+
+        Returns:
+            The session ID (new or existing).
         """
+        action_results = action_results or []
         task_desc = task.test_path or task.description or ""
         action_summaries = [a.reasoning for a in action_history if a.reasoning]
         if final_reply:
@@ -290,7 +357,17 @@ class AgentLoop:
             success=success,
             reason=reason,
         )
-        self._memory.save_session({
+        actions_data = [
+            {
+                "round": i + 1,
+                "action_type": a.type.value,
+                "action_params": a.params,
+                "reasoning": a.reasoning,
+                "result": action_results[i] if i < len(action_results) else "",
+            }
+            for i, a in enumerate(action_history)
+        ]
+        session_data = {
             "test_path": task.test_path,
             "description": task.description or "",
             "final_reply": final_reply,
@@ -298,16 +375,12 @@ class AgentLoop:
             "rounds": rounds,
             "reason": reason,
             "summary": summary,
-            "actions": [
-                {
-                    "round": i + 1,
-                    "action_type": a.type.value,
-                    "action_params": a.params,
-                    "reasoning": a.reasoning,
-                }
-                for i, a in enumerate(action_history)
-            ],
-        })
+            "actions": actions_data,
+        }
+        if session_id is not None:
+            self._memory.append_to_session(session_id, session_data)
+            return session_id
+        return self._memory.save_session(session_data)
 
     def _parse_action(self, response: dict[str, Any], context_parts: list[str]) -> Action | None:
         """Parse LLM response into an Action object.
