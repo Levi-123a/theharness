@@ -962,3 +962,32 @@
   - **前后端数据契约的最小化**：后端不应存冗余数据（done action 的 result 存了 reasoning 就是冗余），前端不应做推断（假设渲染顺序而非依赖数据字段）。`query_index` 的引入让前端只需按字段分组，无需推断
   - **WebSocket 事件时序不可靠**：`ws.onclose` 可能在某些浏览器/环境下延迟触发，不能作为恢复 UI 状态的唯一机制。应在 `result` 事件（业务语义上的"完成"）中恢复
   - **数据迁移的向后兼容**：新增 `query_index` 列用 `ALTER TABLE ADD COLUMN ... DEFAULT 0`，旧行自动获得 0，不破坏现有数据
+
+---
+
+## 2026-08-06 16:30 — 文档与代码一致性修复
+
+- **时间戳**：2026-08-06 16:30
+- **阶段**：文档收尾
+- **触发的 Superpowers 技能**：无（只读对照 + 文档编辑）
+- **关键 prompt / context 配置**：
+  - 用户输入："修复好文档问题"
+  - 系统对照 TASK.md §五 交付物清单逐项检查 SPEC.md、REFLECTION.md、AGENT_LOG.md 中描述与代码实际实现的一致性
+- **发现的不一致问题**：
+  1. `SPEC.md §3.7 凭据管理` 仍描述"AES 加密存储、主密码"——但代码已于 2026-08-05 重构为 `keyring` OS 钥匙串
+  2. `SPEC.md §4.2 凭据威胁模型` 仍含"AES-256 加密、PBKDF2 迭代 100,000 次、主密码暴力破解、文件权限 600"等旧对策
+  3. `SPEC.md §9 验收标准` 凭据管理项写"加密存储→读取"
+  4. `SPEC.md §11.3 六维度表` 配置维度写"CredentialManager 加密存储"
+  5. `REFLECTION.md 第七部分` 凭据反思仍基于 AES 方案，未反映 keyring 重构
+  6. `REFLECTION.md` 测试数量写"82 个测试"，实际已有 137 个
+- **修复内容**：
+  1. **SPEC.md §3.7**：改为"通过 `keyring` 库对接 OS 原生钥匙串进行存储、读取、状态查看（不回显明文）、删除；无 keyring 后端时降级到环境变量"
+  2. **SPEC.md §4.2 威胁模型表**：重写为 8 项 keyring 时代威胁——明文存储、主密码泄露、肩窥攻击、凭据回显、进程内存 dump、Git 提交泄露、容器环境降级风险、凭据列表枚举
+  3. **SPEC.md §9**：改为"keyring 存储→读取→状态不回显→清除，全链路测试通过；无 keyring 时降级到环境变量"
+  4. **SPEC.md §11.3**：改为"Config 数据类 + CredentialManager（keyring OS 钥匙串）"
+  5. **REFLECTION.md 第七部分**：重写为反映 keyring 重构过程——AES 方案在 Render 容器失败的根因、keyring 重构后的威胁模型、TDD 在 fixture 作用域 bug 上的发现价值
+  6. **REFLECTION.md 测试数量**：82 → 137（第一部分 + 第二部分回归保护段）；Bug 发现段补充 keyring 重构时 fixture 作用域 bug 的发现
+- **学到的教训**：
+  - **文档滞后于代码是常态**：每次重大重构（如凭据方案从 AES 改为 keyring）后，必须同步检查 SPEC、REFLECTION、AGENT_LOG 中所有提及该方案的位置。本次发现 6 处不一致，均源于 2026-08-05 重构后只更新了代码和部分文档（AGENT_LOG 已记录重构过程），但 SPEC 和 REFLECTION 中的旧描述未被清理
+  - **文档一致性检查应分模块进行**：按"凭据"关键词 grep 全部文档，比逐文件通读更高效地定位过时描述
+  - **历史记录与现状描述的边界**：AGENT_LOG 中记录"AES 方案的历史决策"是合理的（这是过程证据），但 SPEC 和 REFLECTION 中描述当前设计时必须反映最新状态，不能保留过时方案

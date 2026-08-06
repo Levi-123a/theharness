@@ -137,11 +137,11 @@
 
 ### 3.7 凭据管理（CredentialManager）
 
-- **输入**：主密码、API key
-- **行为**：AES 加密存储、解密读取、状态查看（不回显）、清除
+- **输入**：provider 名称、API key、可选 base_url、model
+- **行为**：通过 `keyring` 库对接 OS 原生钥匙串（Windows Credential Manager / macOS Keychain / Linux Secret Service）进行存储、读取、状态查看（不回显明文）、删除；无 keyring 后端时降级到环境变量
 - **输出**：存储/读取/状态/删除结果
-- **边界条件**：主密码不持久化；加密文件权限 600
-- **错误处理**：主密码错误时拒绝解密；文件不存在时引导首次设置
+- **边界条件**：无主密码；凭据不落盘明文；容器环境无 keyring 时自动降级
+- **错误处理**：keyring 异常时降级到环境变量读取；WebUI 保存/删除端点检测到无 keyring 时返回 503 友好提示，指引改用环境变量
 
 ### 3.8 WebUI（FastAPI）
 
@@ -193,13 +193,14 @@
 
 | 威胁 | 对策 |
 |------|------|
-| 明文存储 | AES-256 加密存储，密文落盘 |
-| 主密码暴力破解 | PBKDF2 迭代 100,000 次 + 随机 salt |
-| 主密码持久化 | 不写入磁盘，仅存进程内存，退出即清除 |
-| 肩窥攻击 | 录入时隐藏输入（`getpass`），status 不回显明文 |
-| 文件权限过宽 | 加密文件权限 600（仅 owner 可读写） |
+| 明文存储 | 使用 OS 原生钥匙串（keyring），凭据不落盘明文；容器无 keyring 时降级到环境变量，并明确标注明文风险 |
+| 主密码泄露 | 无需主密码——钥匙串由 OS 用户会话保护，登录即解锁 |
+| 肩窥攻击 | WebUI 录入使用 `type=password` 隐藏；CLI 使用 `getpass` 隐藏输入；`status()` 仅返回布尔值，不回显明文 |
+| 凭据回显 | `status()` 返回 `{"api_key": true}` 而非 key 本身；明文 key 仅在 `get_api_key()` 内部使用，不通过 API 返回 |
 | 进程内存 dump | key 使用后尽快从局部变量清除；不写入日志 |
-| Git 提交泄露 | `.gitignore` 排除凭据文件；提交前自查 |
+| Git 提交泄露 | `.gitignore` 排除 `.env`；仓库内绝不存储真实凭据 |
+| 容器环境降级风险 | Render 等容器无 keyring 后端时，自动降级到环境变量；WebUI 保存密钥端点返回 503 友好提示指引改用环境变量；`.env` 为明文，已明确标注风险 |
+| 凭据列表枚举 | keyring 无原生列举 API，自行维护 `__providers__` index 追踪已存 provider 列表，index 仅存 provider 名称不存 key |
 
 **动作安全：**
 - 工作目录围栏：所有文件操作限制在工作目录内
@@ -403,7 +404,7 @@ failure_patterns.json
 | Agent 主循环 | mock-LLM 下走完成功/放弃/超轮次/重复动作 4 条分支，测试全绿 |
 | 反馈闭环 | 5 种失败分类各有测试覆盖，分类器确定性验证通过（同输入同输出） |
 | 护栏 | 5 类危险动作各被拦截，安全动作放行，确定性验证通过 |
-| 凭据管理 | 加密存储→读取→状态不回显→清除，全链路测试通过 |
+| 凭据管理 | keyring 存储→读取→状态不回显→清除，全链路测试通过；无 keyring 时降级到环境变量 |
 | WebUI | 输入 test 路径→开始修复→实时流式输出→历史记录可查 |
 | 分发 | `docker build` + `docker run` 一条命令启动 |
 | 机制演示 | `python demo.py` 确定性复现 3 种行为 |
@@ -456,7 +457,7 @@ agent 能执行的操作：`read_file`、`edit_file`、`write_file`、`run_shell
 | 记忆 | 项目约定存储 + 按需查询注入 | `memory/store.py` |
 | 治理 | 5 类危险动作拦截 + HITL 审批 | `guardrail/guardrail.py` |
 | 反馈 | 校验器 → 分类器 → 回灌器三段链路（**重点深入**） | `feedback/` |
-| 配置 | Config 数据类 + CredentialManager 加密存储 | `config.py`, `credentials/manager.py` |
+| 配置 | Config 数据类 + CredentialManager（keyring OS 钥匙串） | `config.py`, `credentials/manager.py` |
 
 六个维度均有可运行的最低实现，其中 **反馈** 维度作为主要贡献深入实现。
 
