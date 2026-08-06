@@ -509,3 +509,70 @@ def test_credential_service_name_is_fixed_string(tmp_path, monkeypatch):
 
     assert isinstance(service_name, str)
     assert service_name == "the-harness"
+
+
+def test_credentials_status_returns_200_when_keyring_unavailable(tmp_path, monkeypatch):
+    """GET /api/credentials/status must return 200 even when keyring has no backend.
+
+    Bug: On Linux containers without gnome-keyring/kwallet, keyring calls raise
+    exceptions (e.g. NoKeyringError, RuntimeError). The endpoint had no
+    try/except, so FastAPI returned 500 "Internal Server Error". The frontend
+    tried to parse it as JSON and failed with "Unexpected token 'I'".
+
+    Fix: CredentialManager.status() and the endpoint must degrade gracefully —
+    return an empty providers dict instead of propagating the exception.
+    """
+    import importlib
+    from unittest.mock import patch, MagicMock
+
+    webui_mod = importlib.import_module("the_harness.webui.app")
+    # Mock keyring that raises on every call (simulates no backend on Render)
+    mock_kr = MagicMock()
+    mock_kr.get_password.side_effect = RuntimeError("No keyring backend available")
+    mock_kr.set_password.side_effect = RuntimeError("No keyring backend available")
+    monkeypatch.setattr(webui_mod, "_credential_manager", None)
+    # Clear env vars so status() has nothing to fall back on
+    for var in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL"):
+        monkeypatch.delenv(var, raising=False)
+
+    client = TestClient(app)
+    with patch("the_harness.credentials.manager.keyring", mock_kr):
+        resp = client.get("/api/credentials/status")
+
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+    data = resp.json()
+    assert "providers" in data
+    assert data["providers"] == {}
+
+
+def test_credentials_store_returns_friendly_error_when_keyring_unavailable(tmp_path, monkeypatch):
+    """POST /api/credentials/store must return JSON error (not 500) when keyring is unavailable.
+
+    Bug: store endpoint only caught PermissionError, but keyring raises
+    RuntimeError/NoKeyringError on Linux without a backend. The uncaught
+    exception became 500 "Internal Server Error".
+
+    Fix: Catch all exceptions from keyring, return a 503 JSON response with a
+    helpful message guiding the user to use environment variables instead.
+    """
+    import importlib
+    from unittest.mock import patch, MagicMock
+
+    webui_mod = importlib.import_module("the_harness.webui.app")
+    mock_kr = MagicMock()
+    mock_kr.set_password.side_effect = RuntimeError("No keyring backend available")
+    mock_kr.get_password.side_effect = RuntimeError("No keyring backend available")
+    monkeypatch.setattr(webui_mod, "_credential_manager", None)
+
+    client = TestClient(app)
+    with patch("the_harness.credentials.manager.keyring", mock_kr):
+        resp = client.post(
+            "/api/credentials/store",
+            json={"provider": "openai", "api_key": "sk-test-key", "base_url": "", "model": ""},
+        )
+
+    assert resp.status_code != 500, "Should not return 500 Internal Server Error"
+    assert resp.status_code in (200, 503), f"Expected 200 or 503, got {resp.status_code}"
+    # Must be valid JSON, not "Internal Server Error" text
+    data = resp.json()
+    assert "ok" in data or "error" in data

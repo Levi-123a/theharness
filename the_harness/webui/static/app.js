@@ -709,7 +709,12 @@ function editProvider(name, info) {
 
 async function deleteProvider(name) {
     try {
-        await fetch(`/api/credentials/${name}`, { method: 'DELETE' });
+        const resp = await fetch(`/api/credentials/${name}`, { method: 'DELETE' });
+        const data = await resp.json();
+        if (data.ok === false || data.detail) {
+            addLine(data.detail || data.error || '删除失败', 'error');
+            return;
+        }
         refreshCredStatus();
     } catch (e) {
         addLine('删除失败: ' + e.message, 'error');
@@ -731,7 +736,10 @@ document.getElementById('cred-store-btn').addEventListener('click', async () => 
             body: JSON.stringify({ provider: provider, api_key: apiKey, base_url: baseUrl, model: model }),
         });
         const data = await resp.json();
-        if (data.detail) { addLine(data.detail, 'error'); return; }
+        if (data.ok === false || data.detail) {
+            addLine(data.detail || data.error || '保存失败', 'error');
+            return;
+        }
         document.getElementById('cred-provider-name').value = '';
         document.getElementById('cred-key-input').value = '';
         document.getElementById('cred-base-url').value = '';

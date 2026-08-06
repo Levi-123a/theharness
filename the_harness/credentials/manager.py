@@ -76,10 +76,15 @@ class CredentialManager:
             A dict with "api_key", "base_url", "model" keys, or None if
             the provider is not configured in either keyring or env vars.
         """
-        # 1. Try OS keyring
-        raw = keyring.get_password(self._service_name, f"provider:{provider}")
-        if raw:
-            return json.loads(raw)
+        # 1. Try OS keyring — degrade gracefully if no backend (e.g. Linux containers)
+        try:
+            raw = keyring.get_password(self._service_name, f"provider:{provider}")
+            if raw:
+                return json.loads(raw)
+        except Exception:
+            # No keyring backend available (Render/Docker without gnome-keyring).
+            # Fall through to environment variables.
+            pass
 
         # 2. Fallback to environment variables for supported providers
         env_map = _ENV_VAR_MAP.get(provider)
@@ -115,7 +120,11 @@ class CredentialManager:
         """
         result: dict[str, dict[str, str | bool]] = {}
         for provider in self._get_index():
-            raw = keyring.get_password(self._service_name, f"provider:{provider}")
+            try:
+                raw = keyring.get_password(self._service_name, f"provider:{provider}")
+            except Exception:
+                # No keyring backend — skip keyring, fall through to env vars
+                break
             if not raw:
                 continue
             entry = json.loads(raw)
@@ -149,13 +158,20 @@ class CredentialManager:
             keyring.delete_password(self._service_name, f"provider:{provider}")
         except keyring.errors.PasswordDeleteError:
             pass
+        except Exception:
+            # No keyring backend — nothing to delete
+            pass
         self._remove_from_index(provider)
 
     # ── Private helpers: provider index ─────────────────────────────
 
     def _get_index(self) -> list[str]:
         """Read the provider index from the keyring."""
-        raw = keyring.get_password(self._service_name, _INDEX_USERNAME)
+        try:
+            raw = keyring.get_password(self._service_name, _INDEX_USERNAME)
+        except Exception:
+            # No keyring backend — return empty index
+            return []
         if not raw:
             return []
         try:

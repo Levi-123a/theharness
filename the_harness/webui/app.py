@@ -384,11 +384,20 @@ async def credentials_store(payload: dict[str, Any]) -> JSONResponse:
     cm = _get_credential_manager()
     try:
         cm.store(provider, api_key, base_url, model)
-    except PermissionError as e:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Cannot write credential file: {e}.",
-        ) from e
+    except (PermissionError, Exception) as e:
+        # keyring unavailable (e.g. Linux containers without gnome-keyring).
+        # Return a friendly JSON error instead of 500.
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": (
+                    "无法保存到 OS 钥匙串（当前环境不支持 keyring）。"
+                    "请改用环境变量配置 API 密钥：在 Render 控制台的 "
+                    "Environment 中设置 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL。"
+                ),
+            },
+            status_code=503,
+        )
     return JSONResponse({"ok": True, "status": cm.status()})
 
 
@@ -398,11 +407,17 @@ async def credentials_delete(provider: str) -> JSONResponse:
     cm = _get_credential_manager()
     try:
         cm.delete(provider)
-    except PermissionError as e:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Cannot write credential file: {e}.",
-        ) from e
+    except (PermissionError, Exception) as e:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": (
+                    "无法访问 OS 钥匙串（当前环境不支持 keyring）。"
+                    "如需清除凭据，请在 Render 控制台删除对应的环境变量。"
+                ),
+            },
+            status_code=503,
+        )
     return JSONResponse({"ok": True, "status": cm.status()})
 
 
