@@ -277,7 +277,8 @@
 ```
 Task
 ├── test_path: str          # failing test 文件路径
-└── workspace: str          # 工作目录路径
+├── workspace: str          # 工作目录路径
+└── description: str        # freeform 模式的用户指令（默认空）
 
 Config
 ├── max_rounds: int         # 默认 5
@@ -309,7 +310,8 @@ Result
 ├── success: bool
 ├── rounds: int
 ├── reason: str
-└── action_history: list[Action]
+├── action_history: list[Action]
+└── session_id: int | None  # 数据库会话 ID（用于续接对话时追加到同一会话）
 
 GuardrailResult
 ├── blocked: bool
@@ -343,7 +345,8 @@ session_history.db (SQLite)
     ├── action_type: str
     ├── action_params: str (JSON)
     ├── result: str            # 执行输出，详情视图折叠展示
-    └── reasoning: str         # AI 思考过程，详情视图渲染为气泡
+    ├── reasoning: str         # AI 思考过程，详情视图渲染为气泡
+    └── query_index: int       # 标识属于第几次提问（0=首次，1=第一次追问…），用于前端按提问顺序交替渲染 Q&A
 
 failure_patterns.json
 ├── failure_type: str
@@ -357,22 +360,23 @@ failure_patterns.json
 
 ### 7.1 Key 存储方案
 
-- **存储方式**：AES-256 加密文件，`~/.the-harness/credentials.enc`
-- **密钥派生**：PBKDF2（主密码 + 随机 salt，100,000 次迭代）
-- **录入流程**：首次运行 → 提示设置主密码（`getpass` 隐藏输入）→ 输入 API key → 加密存储
-- **查看流程**：输入主密码解锁 → 显示 `{"openai": "configured"}`（不回显明文）
-- **更新流程**：输入主密码解锁 → 输入新 key → 重新加密
-- **清除流程**：输入主密码解锁 → 删除指定 provider 的 key
+- **存储方式**：操作系统原生钥匙串（Windows Credential Manager / macOS Keychain / Linux Secret Service），通过 `keyring` 库访问
+- **为什么不加密文件**：原方案 AES-256 + PBKDF2 加密文件在跨平台、容器环境、用户体验上都有局限——主密码需要每次启动输入，容器内无挂载时凭据丢失，Windows 文件权限不可靠。OS 钥匙串由系统进程保护，无需主密码，凭据不落盘明文，跨会话持久
+- **录入流程**：WebUI 设置弹窗输入 API key（`type=password` 隐藏）→ `CredentialManager.store()` 调用 `keyring.set_password()` 存入 OS 钥匙串；或 CLI `the-harness-creds store` 隐藏输入
+- **查看流程**：`status()` 返回 `{"openai": {"api_key": true, "base_url": "...", "model": "..."}}`（不回显明文 key，仅返回布尔值）
+- **更新流程**：重新调用 `store()` 覆盖旧 key（keyring 原生支持覆盖）
+- **清除流程**：`delete(provider)` 调用 `keyring.delete_password()` 删除
+- **环境变量回退**：无 keyring 后端时（如 Linux 容器无 gnome-keyring），自动降级到环境变量 `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL`。`.env` 文件为明文，进程环境可见，仅作为容器环境下的兜底方案
 
 ### 7.2 分发形态
 
 - **形态**：Docker 容器镜像
 - **构建**：`docker build -t the-harness .`
-- **运行**：`docker run -p 8000:8000 -v ~/.the-harness:/root/.the-harness the-harness`
-- **Registry**：推送到 Docker Hub（公开）
-- **CI 构建**：GitHub Actions 中 `docker build` + `docker push`
+- **运行**：`docker run -p 8000:8000 -e OPENAI_API_KEY=sk-xxx the-harness`
+- **Registry**：推送到 GHCR（`ghcr.io/levi-123a/theharness:latest`）
+- **CI 构建**：GitHub Actions 中 `docker build` + `docker push`（main 分支自动推送）
 - **目标平台**：Linux x86_64（Docker 跨平台）
-- **Key 在目标机的安全配置**：首次 `docker run` 时交互式引导录入，加密存储在挂载的 volume 中
+- **Key 在目标机的安全配置**：容器内无 OS 钥匙串，通过环境变量注入（`-e OPENAI_API_KEY=...` 或 `--env-file .env`）。WebUI 保存密钥时会检测到无 keyring 后端，返回 503 友好提示指引改用环境变量
 
 ---
 
@@ -384,7 +388,7 @@ failure_patterns.json
 | LLM 供应商 | 多供应商（默认 OpenAI） | 抽象层设计为可切换接口；满足"可接任意供应商"要求；mock 实现用于确定性测试 |
 | Web 框架 | FastAPI | 轻量、原生 WebSocket 支持、自动文档；Python 生态内最佳选择 |
 | 测试框架 | pytest | 成熟稳定；fixture 体系适合 mock 注入；CI 友好 |
-| 加密库 | cryptography | 成熟稳定；AES + PBKDF2 支持完善 |
+| 凭据存储 | keyring | 对接 OS 原生钥匙串（Windows Credential Manager / macOS Keychain / Linux Secret Service），无需主密码，凭据不落盘明文。容器环境无 keyring 时降级到环境变量。 |
 | 数据库 | SQLite | 无需额外服务；适合单机场景；Python 内置支持 |
 | 分发 | Docker | 单命令启动；环境隔离；CI 自动构建；WebUI 部署友好 |
 | 部署平台 | Render / Fly.io | 免费额度；支持 Docker 部署；公网可访问 URL |

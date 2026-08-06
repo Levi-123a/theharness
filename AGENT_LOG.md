@@ -908,3 +908,57 @@
   - **会话追加的 round 编号**：`append_to_session` 必须查询 `MAX(round)` 继续编号，否则新 actions 的 round 从 1 开始会与已有 actions 冲突
   - **DONE 动作的记录价值**：freeform 模式下 LLM 可能立即返回 DONE（无文件操作），若不显式加入 `action_history`，该次提问在会话详情中无任何 action 记录，用户看不到 AI 的回答
   - **浏览器验证的 workspace 陷阱**：项目目录自身的 `.harness/sessions.db` 包含开发期间产生的会话，与种子数据混淆；浏览器验证时必须显式设置 workspace 并切换 tab 触发 `loadSessions` 刷新
+
+---
+
+## 2026-08-05 20:00 — 修复 Render 部署凭据 API 500 错误
+
+- **时间戳**：2026-08-05 20:00
+- **触发的 Superpowers 技能**：`test-driven-development`（RED→GREEN）
+- **Task 编号**：Bug fix（部署后凭据配置失败）
+- **问题**：部署到 Render 后，WebUI 设置弹窗"检查状态"报错 `Unexpected token 'I', "Internal S"... is not valid JSON`。根因：Render Linux 容器无 gnome-keyring，`keyring.get_password()` 抛 `RuntimeError`，`/api/credentials/status` 端点无 try/except，异常传播成 500 "Internal Server Error"，前端 `resp.json()` 解析失败
+- **TDD 流程**：
+  1. **RED**：`tests/test_webui.py` 新增 2 个测试——`test_credentials_status_returns_200_when_keyring_unavailable`（mock keyring 抛 RuntimeError，断言返回 200 + 空 providers）和 `test_credentials_store_returns_friendly_error_when_keyring_unavailable`（断言返回 JSON 非 500）。运行确认失败（RuntimeError 未被捕获）
+  2. **GREEN**：
+     - `CredentialManager.get/status/delete/_get_index` 全部 try/except 包裹 keyring 调用，异常时降级到环境变量或返回空
+     - `/api/credentials/store` 和 `/delete` 端点 catch 所有异常，返回 503 JSON + 友好中文提示指引改用环境变量
+     - 前端 store/delete 检查 `data.ok === false`，显示 `data.error`
+  3. 全量 135 个测试通过
+- **涉及文件**：
+  - `the_harness/credentials/manager.py` — 4 个方法加 try/except
+  - `the_harness/webui/app.py` — store/delete 端点返回 503 JSON
+  - `the_harness/webui/static/app.js` — 前端处理 503 响应
+  - `tests/test_webui.py` — 2 个新测试
+- **Commit**：`d58c436`
+- **学到的教训**：
+  - **keyring 的环境差异**：keyring 库在 Linux 无桌面环境时会抛异常而非返回 None，这与 macOS/Windows 行为不同。跨平台代码必须 catch 所有异常
+  - **错误边界的层级**：CredentialManager 应吞掉 keyring 异常（降级），WebUI 端点应吞掉 CredentialManager 异常（返回友好 JSON）。不同层级有不同的错误处理策略
+
+---
+
+## 2026-08-05 21:00 — 修复聊天发送卡住、回复重复、历史语序错乱
+
+- **时间戳**：2026-08-05 21:00
+- **触发的 Superpowers 技能**：`test-driven-development`（RED→GREEN）
+- **Task 编号**：Bug fix（3 个前端+后端交互 bug）
+- **问题**：用户报告 3 个问题：
+  1. 发送一句话后智能体回复，有时无法发送下一句（切换页面后能发但回复重复显示）
+  2. 回复在大框（headline）和小框（detail）各显示一次：`done · 第2轮` + 回复内容 + `执行结果` + 相同回复内容
+  3. 点击历史会话后语序错乱：Q1 Q2 Q3 A1 A2 A3 而非 Q1 A1 Q2 A2 Q3 A3
+- **TDD 流程**：
+  1. **RED**：`tests/test_agent_loop.py` 新增 2 个测试——`test_freeform_done_action_result_not_duplicate_reasoning`（断言 done action 的 result 不等于 reasoning）和 `test_get_session_returns_query_index_for_interleaving`（断言 actions 有 query_index 字段且追加提问时递增）。运行确认失败（result == reasoning；query_index 字段不存在）
+  2. **GREEN**：
+     - `agent_loop.py`：done/give_up 的 `action_results` 改为存空字符串（原存 `action.reasoning` 导致 result == reasoning）
+     - `memory/store.py`：actions 表新增 `query_index` 列（迁移 + save/append/get 同步更新），`append_to_session` 查询 `MAX(query_index)` 递增
+     - `webui/static/app.js`：`loadSessionDetail` 按 `query_index` 分组交替渲染 Q&A；`result` 事件中立即重新启用发送按钮（不依赖 onclose）；done action 的 detail 仅在 `result !== reasoning` 时显示
+  3. 全量 137 个测试通过
+- **涉及文件**：
+  - `the_harness/agent_loop.py` — done/give_up 的 action_results 存空字符串
+  - `the_harness/memory/store.py` — 新增 query_index 列 + 迁移 + save/append/get 更新
+  - `the_harness/webui/static/app.js` — loadSessionDetail 交替渲染 + result 事件恢复按钮 + detail 去重
+  - `tests/test_agent_loop.py` — 2 个新测试
+- **Commit**：`77a2b35`
+- **学到的教训**：
+  - **前后端数据契约的最小化**：后端不应存冗余数据（done action 的 result 存了 reasoning 就是冗余），前端不应做推断（假设渲染顺序而非依赖数据字段）。`query_index` 的引入让前端只需按字段分组，无需推断
+  - **WebSocket 事件时序不可靠**：`ws.onclose` 可能在某些浏览器/环境下延迟触发，不能作为恢复 UI 状态的唯一机制。应在 `result` 事件（业务语义上的"完成"）中恢复
+  - **数据迁移的向后兼容**：新增 `query_index` 列用 `ALTER TABLE ADD COLUMN ... DEFAULT 0`，旧行自动获得 0，不破坏现有数据

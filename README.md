@@ -245,6 +245,8 @@ Docker 镜像（基于 `python:3.12-slim`）打包了完整应用：
 
 **Render.com 一键部署：** 仓库根目录的 `render.yaml` 文件提供了 Render Blueprint 用于自动部署。将 GitHub 仓库连接到 Render 后，它会自动检测配置。
 
+**线上部署地址：** https://the-harness.onrender.com/ （Render 免费层，首次访问需等 30-60 秒冷启动）
+
 ### CI/CD 管道
 
 | 平台 | 配置文件 | Jobs |
